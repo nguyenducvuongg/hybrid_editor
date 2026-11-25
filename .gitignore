@@ -61,3 +61,4 @@ desktop.ini
 
 # Audits are working notes for whoever runs them, not part of the source
 audit/
+graphify-out/
