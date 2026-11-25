@@ -445,6 +445,93 @@ export component TimelineTray inherits Rectangle {
 
         Rectangle { horizontal-stretch: 1; }
 
+        if Editor.agent-turn-active || Editor.agent-turn-pending-review: Rectangle {
+            height: 26px;
+            border-radius: Theme.r-sm;
+            background: Theme.field;
+            border-width: 1px;
+            border-color: Editor.agent-turn-active ? Theme.accent : Theme.warn;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 6px;
+
+                Text {
+                    text: Editor.agent-turn-active
+                        ? "AI: " + Editor.agent-turn-summary
+                        : "AI Review: " + Editor.agent-turn-summary;
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                    vertical-alignment: center;
+                    max-width: 180px;
+                    overflow: elide;
+                }
+
+                if Editor.agent-turn-active: Rectangle {
+                    width: cancel-lbl.preferred-width + 12px;
+                    height: 20px;
+                    y: 3px;
+                    border-radius: Theme.r-xs;
+                    background: cancel-touch.has-hover ? Theme.danger : Theme.raised;
+
+                    cancel-lbl := Text {
+                        text: "Cancel";
+                        color: cancel-touch.has-hover ? #ffffff : Theme.fg;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    cancel-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Editor.cancel-agent-turn(); }
+                    }
+                }
+
+                if !Editor.agent-turn-active && Editor.agent-turn-pending-review: Rectangle {
+                    width: accept-lbl.preferred-width + 12px;
+                    height: 20px;
+                    y: 3px;
+                    border-radius: Theme.r-xs;
+                    background: accept-touch.has-hover ? Theme.green : Theme.raised;
+
+                    accept-lbl := Text {
+                        text: "Accept";
+                        color: accept-touch.has-hover ? Theme.on-green : Theme.fg;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    accept-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Editor.accept-agent-turn(); }
+                    }
+                }
+
+                if !Editor.agent-turn-active && Editor.agent-turn-pending-review: Rectangle {
+                    width: revert-lbl.preferred-width + 12px;
+                    height: 20px;
+                    y: 3px;
+                    border-radius: Theme.r-xs;
+                    opacity: Editor.agent-turn-can-revert ? 1.0 : 0.45;
+                    background: (Editor.agent-turn-can-revert && revert-touch.has-hover) ? Theme.warn : Theme.raised;
+
+                    revert-lbl := Text {
+                        text: "Revert Turn";
+                        color: (Editor.agent-turn-can-revert && revert-touch.has-hover) ? #111111 : Theme.fg;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    revert-touch := TouchArea {
+                        enabled: Editor.agent-turn-can-revert;
+                        mouse-cursor: Editor.agent-turn-can-revert ? pointer : default;
+                        clicked => { Editor.revert-agent-turn(); }
+                    }
+                }
+            }
+        }
+
         // The preview axis: the monitor shows the frame under the pointer
         // as it crosses the lanes, the playhead staying put. The chevron
         // beside it chooses whether the sound under the pointer plays too.

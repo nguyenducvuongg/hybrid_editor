@@ -545,6 +545,29 @@ component Clip inherits Rectangle {
             px-per-second: root.px-per-second;
         }
 
+        // An `AI` badge when the active/unaccepted Agent turn touched this clip.
+        if root.item.agent-modified && root.width > 48px: Rectangle {
+            x: parent.width - self.width - (root.item.fx && root.width > 60px ? root.chip-w + 8px : 4px);
+            y: (parent.height - self.height) / 2;
+            width: root.chip-w;
+            height: root.chip;
+            border-radius: Theme.r-xs;
+            background: Theme.warn;
+
+            Text {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                text: "AI";
+                color: #111111;
+                font-size: Math.max(9px, root.chip * 0.55);
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
         // An `fx` chip when effects are live on the clip, so a styled clip is
         // tellable from a plain one without opening a panel.
         if root.item.fx && root.width > 60px: Rectangle {
@@ -584,8 +607,8 @@ component Clip inherits Rectangle {
         width: parent.width;
         height: parent.height;
         border-radius: Theme.r-sm;
-        border-width: touch.lifted ? 3px : root.item.selected ? 2px : 1px;
-        border-color: root.item.selected || touch.lifted ? Theme.accent : root.mark;
+        border-width: touch.lifted ? 3px : (root.item.selected || root.item.agent-modified) ? 2px : 1px;
+        border-color: (root.item.selected || touch.lifted) ? Theme.accent : (root.item.agent-modified ? Theme.warn : root.mark);
         // Picked up by a hold: it rises off the lane until it is let go.
         drop-shadow-blur: touch.lifted ? 10px : 0px;
         drop-shadow-offset-y: touch.lifted ? 3px : 0px;

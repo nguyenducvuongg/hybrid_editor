@@ -34,6 +34,7 @@ pub mod enhance;
 pub mod export;
 pub mod export_apart;
 pub mod jobs;
+pub mod lease;
 pub mod lock;
 pub mod logs;
 pub mod machine;
@@ -63,9 +64,15 @@ pub use cutout::{AnalyseRequest, Cutouts};
 pub use dirs::AppDirs;
 pub use enhance::{EnhanceRequest, Enhancers};
 pub use jobs::{Job, SingleFlight};
+pub use lease::{
+    DEFAULT_GRACE_MS, LeaseError, LeaseManager, LeaseRole, MAX_GRACE_MS, MIN_GRACE_MS,
+    RecoveredLease, SessionLease, now_unix_ms,
+};
 pub use projects::ProjectInfo;
 pub use reverse::{ReverseRequest, Reversers};
-pub use session::{EditorView, Session, SettingsView};
+pub use session::{
+    DiffSubscriber, EditorView, LiveSession, MutationSource, Session, SettingsView, StateDiffEvent,
+};
 pub use stabilize::{StabilizeRequest, Stabilizers};
 pub use titles::{TitleClip, Titles};
 

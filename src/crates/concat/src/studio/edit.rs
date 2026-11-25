@@ -482,7 +482,13 @@ impl Studio {
         if let Some(session) = self.session.as_mut()
             && session.can_undo()
         {
+            let undone_turn = session.top_undo_turn().map(|m| m.turn_id.clone());
             session.undo();
+            if undone_turn.is_some()
+                && undone_turn.as_deref() == self.agent_hud.pending_review_turn_id.as_deref()
+            {
+                self.agent_hud.clear_active_and_highlights();
+            }
             Asked::log(format_args!("edit: Undo"));
             self.after_change();
         } else {
@@ -498,10 +504,52 @@ impl Studio {
             && session.can_redo()
         {
             session.redo();
+            if let Some(meta) = session.top_undo_turn().cloned() {
+                self.agent_hud.on_turn_committed(
+                    &meta.turn_id,
+                    &meta.summary,
+                    &meta.affected_clip_ids,
+                );
+            }
             Asked::log(format_args!("edit: Redo"));
             self.after_change();
         } else {
             log::debug!("edit: Redo was asked for with nothing to redo");
+        }
+    }
+
+    /// Dismisses Hybrid Timeline AI highlights (`Accept`) while preserving the turn in Undo (`I1`, `P4`).
+    pub fn accept_agent_turn(&mut self) {
+        self.agent_hud.accept();
+    }
+
+    /// Atomically reverts the highlighted Agent turn if it sits at the top of the Undo stack.
+    pub fn revert_agent_turn(&mut self) {
+        let top_turn_id = self
+            .session
+            .as_ref()
+            .and_then(|s| s.top_undo_turn().map(|m| m.turn_id.as_str()));
+        if self.agent_hud.can_revert(top_turn_id) {
+            self.undo();
+        } else if self.agent_hud.pending_review_turn_id.is_some() {
+            self.notify(
+                "Newer manual edits sit above this Agent turn; use Undo (Cmd+Z) to step back safely.",
+                true,
+            );
+        }
+    }
+
+    /// Cancels an active uncommitted Agent turn and restores the pre-turn baseline (`I1`).
+    pub fn cancel_agent_turn(&mut self) {
+        let Some(turn_id) = self.agent_hud.active_turn_id.clone() else {
+            return;
+        };
+        if let Some(session) = self.session.as_mut()
+            && session.active_turn_id() == Some(turn_id.as_str())
+            && session.rollback_agent_turn(&turn_id).is_ok()
+        {
+            self.agent_hud.clear_active_and_highlights();
+            self.after_change();
         }
     }
 
@@ -603,5 +651,123 @@ impl Studio {
         self.host
             .playback
             .set_clips(std::path::PathBuf::from(session.path()), specs);
+    }
+}
+
+#[cfg(test)]
+mod hybrid_hud_tests {
+    use super::*;
+    use concat_host::projects;
+    use std::path::PathBuf;
+
+    struct ScratchDir(PathBuf);
+
+    impl ScratchDir {
+        fn new(label: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("hybrid-hud-{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("create scratch dir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn agent_hud_accept_clears_highlights_while_preserving_cmd_z_undo() {
+        let scratch = ScratchDir::new("accept");
+        let info = projects::create(
+            &scratch.0.to_string_lossy(),
+            "HudAccept",
+            1920,
+            1080,
+            30,
+            1,
+            [0, 0, 0, 255],
+        )
+        .expect("create");
+        let mut session = Session::open_info(&info).expect("open");
+        let mut hud = AgentTurnHudState::default();
+
+        hud.on_turn_started("t1", "Add title");
+        session.begin_agent_turn("t1", "Add title").expect("begin");
+        let clip_id = session
+            .apply_in_turn(
+                "t1",
+                Command::AddTextClip {
+                    track_id: None,
+                    above: true,
+                    start: 0.0,
+                    style: None,
+                    duration: Some(2.0),
+                    offset_y: None,
+                },
+            )
+            .expect("add text")
+            .created_id
+            .expect("clip id");
+        let (_, commit, _) = session.commit_agent_turn("t1").expect("commit");
+        hud.on_turn_committed("t1", &commit.summary, &commit.affected_clip_ids);
+
+        assert!(hud.is_clip_highlighted(&clip_id));
+        assert!(hud.can_revert(session.top_undo_turn().map(|m| m.turn_id.as_str())));
+
+        // Accept clears highlights only; Undo stack and revision remain untouched.
+        let rev_before = session.revision();
+        hud.accept();
+        assert!(!hud.is_clip_highlighted(&clip_id));
+        assert!(hud.pending_review_turn_id.is_none());
+        assert_eq!(session.revision(), rev_before);
+        assert!(session.can_undo());
+
+        // Cmd+Z still reverts the entire accepted turn.
+        session.undo();
+        assert!(session.project().active().clips.is_empty());
+    }
+
+    #[test]
+    fn agent_hud_revert_requires_top_undo_turn_and_avoids_silent_discard() {
+        let scratch = ScratchDir::new("revert");
+        let info = projects::create(
+            &scratch.0.to_string_lossy(),
+            "HudRevert",
+            1920,
+            1080,
+            30,
+            1,
+            [0, 0, 0, 255],
+        )
+        .expect("create");
+        let mut session = Session::open_info(&info).expect("open");
+        let mut hud = AgentTurnHudState::default();
+
+        session.begin_agent_turn("t1", "AI edit").expect("begin");
+        session
+            .apply_in_turn(
+                "t1",
+                Command::AddTextClip {
+                    track_id: None,
+                    above: true,
+                    start: 0.0,
+                    style: None,
+                    duration: Some(2.0),
+                    offset_y: None,
+                },
+            )
+            .expect("add text");
+        let (_, commit, _) = session.commit_agent_turn("t1").expect("commit");
+        hud.on_turn_committed("t1", &commit.summary, &commit.affected_clip_ids);
+        assert!(hud.can_revert(session.top_undo_turn().map(|m| m.turn_id.as_str())));
+
+        // User makes a manual edit on top of the committed Agent turn.
+        session.apply(Command::AddTrack { bottom: false }).expect("manual edit");
+        assert!(
+            !hud.can_revert(session.top_undo_turn().map(|m| m.turn_id.as_str())),
+            "Revert Turn must guard against silently discarding newer manual edits"
+        );
     }
 }

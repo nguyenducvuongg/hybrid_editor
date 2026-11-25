@@ -12,10 +12,54 @@
 //! disk is written by exactly one code path.
 
 use concat_project::model::VideoSettings;
-use concat_project::{Command, DocumentSettings, Editor, Project, UnreadSummary};
+use concat_project::{
+    Command, DocumentSettings, Editor, Project, TurnCommit, TurnMeta, UnreadSummary,
+    touched_clip_ids,
+};
 use serde::Serialize;
 
+use crate::lease::{LeaseError, LeaseManager, LeaseRole, RecoveredLease, SessionLease, now_unix_ms};
 use crate::projects;
+
+/// Origin of a committed document mutation (`StateDiffEvent`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum MutationSource {
+    /// Manual user edit from UI or direct API command.
+    Manual,
+    /// Committed transactional `AgentTurn`.
+    AgentTurn {
+        /// Turn identifier.
+        turn_id: String,
+        /// Turn summary.
+        summary: String,
+    },
+    /// Undo step.
+    Undo,
+    /// Redo step.
+    Redo,
+    /// Automatic rollback of an uncommitted turn after client crash/lease expiry (`P8`).
+    LeaseRollback {
+        /// Rolled-back turn identifier.
+        turn_id: String,
+    },
+}
+
+/// Revision-stamped diff notification emitted after document mutations (`I1`, `I2`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateDiffEvent {
+    /// Monotonic document revision after the mutation.
+    pub revision: u64,
+    /// What triggered the state change.
+    pub source: MutationSource,
+    /// Clip IDs added or modified relative to the prior state.
+    pub affected_clip_ids: Vec<String>,
+    /// Whether undo is currently available.
+    pub can_undo: bool,
+    /// Whether redo is currently available.
+    pub can_redo: bool,
+}
 
 /// One open project: its folder, its settings and its undo history.
 pub struct Session {
@@ -280,6 +324,135 @@ impl Session {
         self.apply_within(None, command)
     }
 
+    /// Applies one edit command and returns both the updated `EditorView` and a `StateDiffEvent`.
+    pub fn apply_tracked(&mut self, command: Command) -> Result<(EditorView, StateDiffEvent), String> {
+        let is_view = command.is_view_state();
+        let before = self.editor.project().clone();
+        let view = self.apply_within(None, command)?;
+        let affected = if is_view {
+            Vec::new()
+        } else {
+            touched_clip_ids(&before, self.editor.project())
+        };
+        let event = StateDiffEvent {
+            revision: self.editor.revision(),
+            source: MutationSource::Manual,
+            affected_clip_ids: affected,
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+        };
+        Ok((view, event))
+    }
+
+    /// Current monotonic document revision.
+    pub fn revision(&self) -> u64 {
+        self.editor.revision()
+    }
+
+    /// Active uncommitted turn ID, if any.
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.editor.active_turn_id()
+    }
+
+    /// Metadata of the latest undoable `AgentTurn`, if at top of Undo stack.
+    pub fn top_undo_turn(&self) -> Option<&TurnMeta> {
+        self.editor.top_undo_turn()
+    }
+
+    /// Opens a transactional `AgentTurn` on the underlying `Editor`.
+    pub fn begin_agent_turn(&mut self, turn_id: &str, summary: &str) -> Result<(), String> {
+        self.editor
+            .begin_agent_turn(turn_id, summary)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Executes one command inside an open `AgentTurn`.
+    pub fn apply_in_turn(&mut self, turn_id: &str, command: Command) -> Result<EditorView, String> {
+        let outcome = self
+            .editor
+            .apply_in_turn(turn_id, command)
+            .map_err(|e| e.to_string())?;
+        Ok(self.view_with(outcome.created_id))
+    }
+
+    /// Commits an active `AgentTurn` as 1 unified Undo/Redo entry and emits `StateDiffEvent`.
+    pub fn commit_agent_turn(
+        &mut self,
+        turn_id: &str,
+    ) -> Result<(EditorView, TurnCommit, StateDiffEvent), String> {
+        let commit = self
+            .editor
+            .commit_agent_turn(turn_id)
+            .map_err(|e| e.to_string())?;
+        let view = self.view();
+        let event = StateDiffEvent {
+            revision: commit.revision,
+            source: MutationSource::AgentTurn {
+                turn_id: commit.turn_id.clone(),
+                summary: commit.summary.clone(),
+            },
+            affected_clip_ids: commit.affected_clip_ids.clone(),
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+        };
+        Ok((view, commit, event))
+    }
+
+    /// Rolls back an active uncommitted `AgentTurn` cleanly.
+    pub fn rollback_agent_turn(&mut self, turn_id: &str) -> Result<(EditorView, StateDiffEvent), String> {
+        let rev = self
+            .editor
+            .rollback_agent_turn(turn_id)
+            .map_err(|e| e.to_string())?;
+        let view = self.view();
+        let event = StateDiffEvent {
+            revision: rev,
+            source: MutationSource::LeaseRollback {
+                turn_id: turn_id.to_owned(),
+            },
+            affected_clip_ids: Vec::new(),
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+        };
+        Ok((view, event))
+    }
+
+    /// Undoes one step and emits a `StateDiffEvent`.
+    pub fn undo_tracked(&mut self) -> (EditorView, Option<StateDiffEvent>) {
+        if !self.can_undo() {
+            return (self.view(), None);
+        }
+        let before = self.editor.project().clone();
+        let view = self.undo();
+        let affected = touched_clip_ids(&before, &view.project);
+        let event = StateDiffEvent {
+            revision: self.editor.revision(),
+            source: MutationSource::Undo,
+            affected_clip_ids: affected,
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+        };
+        (view, Some(event))
+    }
+
+    /// Redoes one step and emits a `StateDiffEvent`.
+    pub fn redo_tracked(&mut self) -> (EditorView, Option<StateDiffEvent>) {
+        if !self.can_redo() {
+            return (self.view(), None);
+        }
+        let before = self.editor.project().clone();
+        let view = self.redo();
+        let affected = touched_clip_ids(&before, &view.project);
+        let event = StateDiffEvent {
+            revision: self.editor.revision(),
+            source: MutationSource::Redo,
+            affected_clip_ids: affected,
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+        };
+        (view, Some(event))
+    }
+
     /// Applies one edit command as a move of `gesture`, so that a knob
     /// dragged through many values is one undo step; see
     /// `concat_project::Editor::apply_within`. `None` is a step of its own.
@@ -348,6 +521,180 @@ impl Session {
             None,
             Some(std::path::Path::new(&self.path)),
         )
+    }
+}
+
+/// Callback receiving `StateDiffEvent` notifications from a `LiveSession`.
+pub type DiffSubscriber = std::sync::Arc<dyn Fn(&StateDiffEvent) + Send + Sync>;
+
+/// Single-writer coordinated session combining `Session` + `LeaseManager` (`I1`, `I2`, `P8`).
+pub struct LiveSession {
+    session: Session,
+    leases: LeaseManager,
+    subscribers: Vec<DiffSubscriber>,
+}
+
+impl LiveSession {
+    /// Wraps an open `Session` with recoverable lease tracking under `lease_dir`.
+    pub fn new(session: Session, lease_dir: std::path::PathBuf, grace: std::time::Duration) -> Self {
+        let project_key = session.path().to_owned();
+        Self {
+            session,
+            leases: LeaseManager::new(lease_dir, &project_key, grace),
+            subscribers: Vec::new(),
+        }
+    }
+
+    /// Subscribes a live listener (e.g. Slint UI bridge) for `StateDiffEvent` updates.
+    pub fn subscribe(&mut self, sub: DiffSubscriber) {
+        self.subscribers.push(sub);
+    }
+
+    /// Returns a read-only view of the underlying `Session`.
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Acquires the write lease, rolling back any uncommitted turn from a crashed/expired holder.
+    pub fn acquire_lease(
+        &mut self,
+        session_id: &str,
+        client_pid: u32,
+        role: LeaseRole,
+        now_ms: u64,
+    ) -> Result<(SessionLease, Option<RecoveredLease>), LeaseError> {
+        let (lease, recovered) = self.leases.acquire(session_id, client_pid, role, now_ms)?;
+        self.rollback_recovered(&recovered);
+        Ok((lease, recovered))
+    }
+
+    /// Renews heartbeat for `session_id`.
+    pub fn heartbeat(
+        &mut self,
+        session_id: &str,
+        client_pid: u32,
+        now_ms: u64,
+    ) -> Result<SessionLease, LeaseError> {
+        self.leases.heartbeat(session_id, client_pid, now_ms)
+    }
+
+    /// Releases the held lease for `session_id`, rolling back any uncommitted turn first.
+    pub fn release_lease(&mut self, session_id: &str) -> Result<(), LeaseError> {
+        if let Some(tid) = self
+            .leases
+            .current()
+            .filter(|l| l.session_id == session_id)
+            .and_then(|l| l.active_turn_id.clone())
+            && self.session.active_turn_id() == Some(tid.as_str())
+            && let Ok((_, ev)) = self.session.rollback_agent_turn(&tid)
+        {
+            self.emit(&ev);
+        }
+        self.leases.release(session_id)
+    }
+
+    /// Reclaims an expired/dead lease and rolls back any uncommitted turn (`P8`).
+    pub fn reclaim_expired(&mut self, now_ms: u64) -> Option<RecoveredLease> {
+        let rec = self.leases.reclaim_if_expired(now_ms);
+        self.rollback_recovered(&rec);
+        rec
+    }
+
+    /// Executes a standalone command under `caller_session_id` authorization.
+    pub fn apply_for(
+        &mut self,
+        caller_session_id: Option<&str>,
+        command: Command,
+    ) -> Result<(EditorView, StateDiffEvent), String> {
+        self.authorize_write(caller_session_id)?;
+        let (view, ev) = self.session.apply_tracked(command)?;
+        self.emit(&ev);
+        Ok((view, ev))
+    }
+
+    /// Opens an `AgentTurn` under `caller_session_id` authorization.
+    pub fn begin_agent_turn_for(
+        &mut self,
+        caller_session_id: &str,
+        turn_id: &str,
+        summary: &str,
+    ) -> Result<(), String> {
+        let now = now_unix_ms();
+        self.authorize_write(Some(caller_session_id))?;
+        self.session.begin_agent_turn(turn_id, summary)?;
+        if let Err(err) = self
+            .leases
+            .set_active_turn(caller_session_id, Some(turn_id.to_owned()), now)
+        {
+            let _ = self.session.rollback_agent_turn(turn_id);
+            return Err(err.to_string());
+        }
+        Ok(())
+    }
+
+    /// Applies a command inside an active `AgentTurn`.
+    pub fn apply_in_turn_for(
+        &mut self,
+        caller_session_id: &str,
+        turn_id: &str,
+        command: Command,
+    ) -> Result<EditorView, String> {
+        self.authorize_write(Some(caller_session_id))?;
+        self.session.apply_in_turn(turn_id, command)
+    }
+
+    /// Commits an active `AgentTurn` and broadcasts the resulting `StateDiffEvent`.
+    pub fn commit_agent_turn_for(
+        &mut self,
+        caller_session_id: &str,
+        turn_id: &str,
+    ) -> Result<(EditorView, TurnCommit, StateDiffEvent), String> {
+        let now = now_unix_ms();
+        self.authorize_write(Some(caller_session_id))?;
+        let (view, commit, ev) = self.session.commit_agent_turn(turn_id)?;
+        let _ = self.leases.set_active_turn(caller_session_id, None, now);
+        self.emit(&ev);
+        Ok((view, commit, ev))
+    }
+
+    /// Rolls back an active `AgentTurn` and broadcasts the rollback event.
+    pub fn rollback_agent_turn_for(
+        &mut self,
+        caller_session_id: &str,
+        turn_id: &str,
+    ) -> Result<(EditorView, StateDiffEvent), String> {
+        let now = now_unix_ms();
+        self.authorize_write(Some(caller_session_id))?;
+        let (view, ev) = self.session.rollback_agent_turn(turn_id)?;
+        let _ = self.leases.set_active_turn(caller_session_id, None, now);
+        self.emit(&ev);
+        Ok((view, ev))
+    }
+
+    fn authorize_write(&mut self, caller_session_id: Option<&str>) -> Result<(), String> {
+        let now = now_unix_ms();
+        let rec = self
+            .leases
+            .check_writer(caller_session_id, now)
+            .map_err(|e| e.to_string())?;
+        self.rollback_recovered(&rec);
+        Ok(())
+    }
+
+    fn rollback_recovered(&mut self, rec: &Option<RecoveredLease>) {
+        if let Some(rec) = rec
+            && let Some(tid) = rec.uncommitted_turn_id.as_deref()
+            && self.session.active_turn_id() == Some(tid)
+            && let Ok((_, ev)) = self.session.rollback_agent_turn(tid)
+        {
+            self.emit(&ev);
+        }
+    }
+
+    fn emit(&self, event: &StateDiffEvent) {
+        for sub in &self.subscribers {
+            sub(event);
+        }
     }
 }
 
@@ -533,5 +880,109 @@ mod tests {
         let opened = Session::open(&scratch.to_string_lossy(), settings());
         assert!(opened.is_err(), "a half document is not an empty project");
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn p4_view_state_does_not_write_or_pollute_undo() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let info = projects::create(
+            &scratch.path().to_string_lossy(),
+            "P4Test",
+            1920,
+            1080,
+            30,
+            1,
+            [0, 0, 0, 255],
+        )
+        .expect("create");
+        let mut session = Session::open_info(&info).expect("open");
+        session.apply(Command::AddTimeline).expect("add second timeline");
+        session.save(None).expect("save baseline");
+        // Drain undo via reopening cleanly so Undo starts empty.
+        let mut session = Session::open_info(&info).expect("reopen clean");
+        let timeline_ids: [String; 2] = [
+            session.project().timelines[0].id.clone(),
+            session.project().timelines[1].id.clone(),
+        ];
+        let rev0 = session.revision();
+
+        let disk_snapshot = |dir: &str| -> Vec<(String, Vec<u8>)> {
+            let mut entries = Vec::new();
+            for entry in std::fs::read_dir(dir).expect("read project dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_file() {
+                    entries.push((
+                        path.file_name().unwrap().to_string_lossy().into_owned(),
+                        std::fs::read(&path).expect("read file"),
+                    ));
+                }
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries
+        };
+        let baseline_disk = disk_snapshot(&info.path);
+
+        // 20 view-state timeline switches create 0 undo entries, 0 revision bumps, 0 disk writes.
+        for i in 0..20 {
+            let (view, diff) = session
+                .apply_tracked(Command::SelectTimeline {
+                    timeline_id: timeline_ids[i % 2].clone(),
+                })
+                .expect("select timeline");
+            assert!(!view.can_undo);
+            assert_eq!(diff.revision, rev0);
+            assert!(diff.affected_clip_ids.is_empty());
+        }
+        assert_eq!(session.revision(), rev0);
+        assert!(!session.can_undo());
+        assert_eq!(disk_snapshot(&info.path), baseline_disk);
+
+        // 1 document edit creates exactly 1 undo entry and bumps revision once.
+        let (view, diff) = session
+            .apply_tracked(Command::AddTrack { bottom: false })
+            .expect("add track");
+        assert!(view.can_undo);
+        assert_eq!(diff.revision, rev0 + 1);
+        assert_eq!(session.revision(), rev0 + 1);
+    }
+
+    #[test]
+    fn hybrid_100_ops_interleaved_manual_and_agent_turns() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let info = projects::create(
+            &scratch.path().to_string_lossy(),
+            "Stress100",
+            1920,
+            1080,
+            30,
+            1,
+            [0, 0, 0, 255],
+        )
+        .expect("create");
+        let mut session = Session::open_info(&info).expect("open");
+        for i in 0..25 {
+            session
+                .apply_tracked(Command::AddTrack { bottom: false })
+                .expect("manual add");
+            let tid = format!("turn-{i}");
+            session.begin_agent_turn(&tid, "Batch").expect("begin");
+            session
+                .apply_in_turn(
+                    &tid,
+                    Command::AddTextClip {
+                        track_id: None,
+                        above: false,
+                        start: i as f64,
+                        style: None,
+                        duration: Some(1.0),
+                        offset_y: None,
+                    },
+                )
+                .expect("add text");
+            session.commit_agent_turn(&tid).expect("commit");
+            let _ = session.undo_tracked();
+            let _ = session.redo_tracked();
+        }
+        assert!(session.revision() >= 50);
     }
 }

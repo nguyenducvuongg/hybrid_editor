@@ -1368,6 +1368,78 @@ pub struct Studio {
     /// Cutouts and smart strokes the app died working on, by their masks'
     /// folder: not started again by themselves, and said once a session.
     tripped_strokes: HashSet<std::path::PathBuf>,
+    /// UI-only (`ViewState`) attribution for the active or unaccepted `AgentTurn`.
+    pub agent_hud: AgentTurnHudState,
+}
+
+/// View-only (`P4`) Hybrid Timeline attribution state for `AgentTurn` feedback.
+#[derive(Clone, Debug, Default)]
+pub struct AgentTurnHudState {
+    /// Active uncommitted turn ID, if an Agent turn is currently running.
+    pub active_turn_id: Option<String>,
+    /// Most recent committed turn awaiting user Accept/Revert review.
+    pub pending_review_turn_id: Option<String>,
+    /// Human-readable summary displayed in the Hybrid Timeline HUD.
+    pub summary: String,
+    /// Clip IDs highlighted in Slint as Agent-modified.
+    pub highlighted_clip_ids: HashSet<String>,
+    /// Turns explicitly accepted (`Accept` clears highlight only, keeping Undo stack intact).
+    pub dismissed_turn_ids: HashSet<String>,
+}
+
+impl AgentTurnHudState {
+    /// Marks an Agent turn as actively running (wired to Live-Attach turn events in M2).
+    #[allow(dead_code)]
+    pub fn on_turn_started(&mut self, turn_id: &str, summary: &str) {
+        self.active_turn_id = Some(turn_id.to_owned());
+        self.summary = summary.to_owned();
+    }
+
+    /// Marks an Agent turn as committed and highlights affected clips unless already accepted.
+    pub fn on_turn_committed(
+        &mut self,
+        turn_id: &str,
+        summary: &str,
+        affected_clip_ids: &[String],
+    ) {
+        self.active_turn_id = None;
+        if self.dismissed_turn_ids.contains(turn_id) {
+            return;
+        }
+        self.pending_review_turn_id = Some(turn_id.to_owned());
+        self.summary = summary.to_owned();
+        self.highlighted_clip_ids = affected_clip_ids.iter().cloned().collect();
+    }
+
+    /// Clears active/pending attribution after rollback or revert.
+    pub fn clear_active_and_highlights(&mut self) {
+        self.active_turn_id = None;
+        self.pending_review_turn_id = None;
+        self.summary.clear();
+        self.highlighted_clip_ids.clear();
+    }
+
+    /// Dismisses visual highlights (`Accept`) without touching Undo history (`I1`).
+    pub fn accept(&mut self) {
+        if let Some(tid) = self.pending_review_turn_id.take() {
+            self.dismissed_turn_ids.insert(tid);
+        }
+        self.summary.clear();
+        self.highlighted_clip_ids.clear();
+    }
+
+    /// Returns whether `Revert Turn` can safely undo the highlighted turn atomically.
+    pub fn can_revert(&self, top_undo_turn_id: Option<&str>) -> bool {
+        matches!(
+            (self.pending_review_turn_id.as_deref(), top_undo_turn_id),
+            (Some(pending), Some(top)) if pending == top
+        )
+    }
+
+    /// True if `clip_id` should render the AI attribution highlight.
+    pub fn is_clip_highlighted(&self, clip_id: &str) -> bool {
+        self.highlighted_clip_ids.contains(clip_id)
+    }
 }
 
 // ── conversions between the document and the window ─────────────────────
@@ -3237,6 +3309,7 @@ impl Studio {
             region_job: None,
             pending_stroke: None,
             tripped_strokes: HashSet::new(),
+            agent_hud: AgentTurnHudState::default(),
             host,
         };
         studio.handle(crate::panes::Msg::Settings(

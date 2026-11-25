@@ -591,4 +591,13 @@ export global Editor {
     in-out property <string> keys-delete-right;
     in-out property <string> keys-pan;
     in-out property <string> keys-preview-axis;
+
+    // ── Hybrid Agent Turn HUD (I1, I2) ──
+    in-out property <bool> agent-turn-active;
+    in-out property <bool> agent-turn-pending-review;
+    in-out property <string> agent-turn-summary;
+    in-out property <bool> agent-turn-can-revert;
+    callback accept-agent-turn();
+    callback revert-agent-turn();
+    callback cancel-agent-turn();
 }

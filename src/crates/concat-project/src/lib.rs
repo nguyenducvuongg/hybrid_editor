@@ -41,7 +41,7 @@ pub use commands::{
     why_not_merge,
 };
 pub use doc::{DOCUMENT_VERSION, DocumentSettings, document_version, from_document, to_document};
-pub use editor::{Editor, RetiredFields};
+pub use editor::{Editor, RetiredFields, TurnCommit, TurnError, TurnMeta, touched_clip_ids};
 pub use model::Project;
 pub use unread::UnreadSummary;
 

@@ -310,6 +310,7 @@ impl Studio {
                         start: clip.start as f32,
                         duration: clip.duration as f32,
                         selected: self.selection.iter().any(|id| id == &clip.id),
+                        agent_modified: self.agent_hud.is_clip_highlighted(&clip.id),
                         transition_selected: self
                             .selected_transition()
                             .is_some_and(|picked| picked.id == clip.id),
@@ -489,11 +490,20 @@ impl Studio {
         // The tray's undo and redo buttons grey out on these; the Edit menu
         // asks the session itself when it opens.
         // https://github.com/jub0t/Concat/issues/154
-        let (can_undo, can_redo) = self.session.as_ref().map_or((false, false), |session| {
-            (session.can_undo(), session.can_redo())
-        });
+        let (can_undo, can_redo, top_turn_id) =
+            self.session.as_ref().map_or((false, false, None), |session| {
+                (
+                    session.can_undo(),
+                    session.can_redo(),
+                    session.top_undo_turn().map(|m| m.turn_id.as_str()),
+                )
+            });
         editor.set_can_undo(can_undo);
         editor.set_can_redo(can_redo);
+        editor.set_agent_turn_active(self.agent_hud.active_turn_id.is_some());
+        editor.set_agent_turn_pending_review(self.agent_hud.pending_review_turn_id.is_some());
+        editor.set_agent_turn_summary(self.agent_hud.summary.as_str().into());
+        editor.set_agent_turn_can_revert(self.agent_hud.can_revert(top_turn_id));
         let (sound_selected, title_selected) = self.sound_tools();
         editor.set_sound_selected(sound_selected);
         editor.set_title_selected(title_selected);

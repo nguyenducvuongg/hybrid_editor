@@ -70,8 +70,37 @@
 ### Bảng theo dõi Giấy phép (License Inventory)
 | Thành phần | Nguồn / Phiên bản | Giấy phép | Ghi chú tuân thủ |
 | :--- | :--- | :--- | :--- |
-| **Concat Core & UI** | `jub0t/Concat` (`v0.2.12`) | `AGPL-3.0-or-later` | Giữ nguyên `LICENSE`, `LICENSING.md`, `THIRD_PARTY_NOTICES.md`, `README.concat.md`; dự án nội bộ phi thương mại |
+| **Concat Core & UI** | `jub0t/Concat` (`v0.2.12`) | `AGPL-3.0-or-later` | Giữ nguyên `LICENSE`, `LICENSING.md`, `THIRD_PARTY_NOTICES.md`, `docs/README.concat.md`; dự án nội bộ phi thương mại |
 | **Slint** | `1.18.1` (patched) | `GPL-3.0` (open-source) / Royalty-free | Tương thích dùng nội bộ AGPL-3.0 |
 | **FFmpeg** | System Homebrew `9.1` (dev) / `scripts/ffmpeg-macos.sh` `8.1` (LGPL release) | `GPL` (Homebrew local) / `LGPL-2.1+` (release bundle) | Dùng `VideoToolbox` & `AudioToolbox` phần cứng macOS; bản phát hành tuân thủ LGPL |
 | **whisper.cpp (`whisper-rs-sys`)** | `0.15.0` (patched) | `MIT` | Tăng tốc Metal trên Apple Silicon |
 | **ONNX Runtime (`ort`)** | `2.0.0-rc.13` | `MIT` | CoreML Execution Provider trên macOS |
+| **`png` (dev-dependency)** | `0.17` (`concat-export` test-only) | `MIT OR Apache-2.0` | Tạo ảnh RGBA có kênh alpha cho bài test đối chứng renderer `P2` |
+
+---
+
+## 4. Milestone 1 (`001-hybrid-command-bus`) — Unified Command Bus, Transactional `AgentTurn`, Lease & Hybrid Timeline
+
+### Thành phần đã triển khai (`specs/001-hybrid-command-bus/`)
+- **Data Isolation (`I5`)**: `src/crates/concat-host/src/dirs.rs` hỗ trợ `HYBRID_EDIT_DATA_DIR`, đặt `IDENTIFIER = "hybrid_edit_vid"` (`~/Library/Application Support/hybrid_edit_vid`), thêm `AppDirs::leases()`.
+- **Transactional `AgentTurn` (`I1`)**: `src/crates/concat-project/src/editor.rs` bổ sung `begin_agent_turn`, `apply_in_turn`, `commit_agent_turn`, `rollback_agent_turn`, `top_undo_turn`, `revision()`, `touched_clip_ids()`, gom N lệnh Agent thành 1 Undo/Redo duy nhất chung ngăn xếp với sửa thủ công.
+- **Session & `StateDiffEvent` (`I1`, `P4`)**: `src/crates/concat-host/src/session.rs` tách biệt `ViewState` (`Command::is_view_state()`, `Studio::selection`, `playhead`, `AgentTurnHudState`) khỏi `DocumentState`/`revision`/autosave, đồng thời xây dựng `LiveSession` phát `StateDiffEvent`.
+- **Lease-Based Recoverable Lock (`I2`, `P8`)**: `src/crates/concat-host/src/lease.rs` cài `LeaseManager` / `SessionLease` (grace `5000..=10000 ms`, tệp `0o600` dưới `leases/`, `libc::kill(pid, 0)` kiểm tra PID sống) và `LiveSession` tự `rollback_agent_turn` khi client giữ lease bị `SIGKILL`.
+- **Live-Attach Sharing (`I2`)**: `src/crates/concat-api/src/lib.rs` mở rộng `OpenProjects` (`claim_live`, `live_session`) và `Api::live_sessions` để `Holder::Api` đọc/ghi tuần tự trên cùng `LiveSession` với cửa sổ GUI (tích hợp UDS Live-Attach Gateway trong `Host`/`Studio` thực hiện ở **Milestone 2**).
+- **Hybrid Timeline Slint UI (`I1`, `I3`)**: `src/crates/concat/ui/timeline/{model,lanes,tray}.slint`, `ui/editor.slint` và `src/crates/concat/src/{studio.rs,studio/edit.rs,studio/publish.rs,lib.rs}` thêm highlight clip `agent-modified` (viền + badge `AI`), HUD tiến trình/duyệt lượt Agent (`Cancel`, `Accept`, `Revert Turn`) và `Accept` chỉ xóa highlight UI mà giữ nguyên Undo `Cmd+Z`.
+
+### Kết quả kiểm chứng M1 sau lần sửa cuối (MacBook Pro M4 Pro)
+| Kiểm tra | Phạm vi | Kết quả thực tế |
+| :--- | :--- | :--- |
+| `concat-project` (`--offline`) | `265` lib tests (gồm `agent_turn_groups_multiple_edits_into_single_undo_redo_and_supports_rollback`) + `4` `mutations.rs` | **269 passed, 0 failed** |
+| `concat-host` (`--test p8_crash_recovery --offline`) | Crash recovery thật bằng `child.kill()` (`SIGKILL`) giữa `AgentTurn` | **1 passed, 0 failed** |
+| `concat-host` (`--lib --offline`, `BypassSandbox: true` cho VideoToolbox/loopback) | Toàn bộ unit test host (gồm `dirs`, `lease`, `session::p4_view_state`, `hybrid_100_ops`) | **198 passed, 0 failed, 4 ignored** (4 test ignore sẵn của upstream) |
+| `concat-api` (`--offline`, `BypassSandbox: true` cho GPU/export) | Toàn bộ 35 unit test API (gồm `live_attach_shares_window_session_and_serializes_writes`) | **35 passed, 0 failed** |
+| `concat` (`--lib --offline hybrid_hud`) | `AgentTurnHudState` `Accept` giữ `Cmd+Z` + `Revert Turn` chặn xóa nhầm edit mới | **2 passed, 0 failed** (253 filtered out) |
+| `concat-export` (`--test p2_canvas_parity --offline`, `BypassSandbox: true` cho VideoToolbox) | `preview_frame` vs `h264_videotoolbox` `.mp4` với clip `<16:9` + PNG alpha trong suốt | **1 passed, 0 failed** (`0.73s`) |
+| `cargo clippy --all-targets --offline -- -D warnings` | `concat-project`, `concat-host`, `concat-api`, `concat-export` | **0 warnings, 0 errors** (`44.07s`) |
+| `cargo build -p concat --profile quick --offline` | Toàn bộ ứng dụng Slint + UI HUD | **Thành công, 0 lỗi** (`1m 32s`) |
+| `graphify update .` | Cập nhật AST Knowledge Graph tại root | **17,451 nodes, 33,921 edges, 2,492 communities** |
+
+### Ghi chú / Bước tiếp theo (M2)
+- Giao thức Unix Domain Socket (`chmod 600`) và cổng MCP `live-attach` + Semantic/Perception tools (`inspect_project_tree`, `inspect_timeline`, `preview_timeline_strip`, `begin_agent_turn` / `commit_agent_turn`) cùng nối `Studio`/`Host` vào `OpenProjects::claim_live` sẽ được triển khai ở **Milestone 2**.

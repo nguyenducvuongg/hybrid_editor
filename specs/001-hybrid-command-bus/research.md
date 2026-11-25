@@ -1,0 +1,25 @@
+# Research: Milestone 1 — Unified Command Bus, AgentTurn, Recoverable Lease & Hybrid Timeline
+
+## Decision 1: Transactional `AgentTurn` on `concat_project::Editor`
+- **Decision:** Extend `concat_project::Editor` (`src/crates/concat-project/src/editor.rs`) with explicit `begin_agent_turn(turn_id, summary)`, `commit_agent_turn(turn_id)`, and `rollback_agent_turn(turn_id)` alongside existing `apply_within(gesture, cmd)`.
+- **Rationale:** `concat_project::Editor` already uses `Arc`-backed copy-on-write snapshots (`Project`) with `UNDO_DEPTH = 200` and `Arc::ptr_eq` diffing (`tidy_touched`). By capturing a pre-turn `Project` snapshot on `begin_agent_turn`, running N commands directly on `self.project` without pushing intermediate undo frames, and pushing 1 unified `Snapshot` (with `TurnMeta { turn_id, summary, affected_clip_ids }`) on `commit_agent_turn`, we guarantee 1-step Undo/Redo (`I1`) and clean atomic rollback if aborted or crashed (`P8`) without losing monotonic `IdMint` safety.
+- **Alternatives considered:** Rewriting `concat-project` onto `concat-doc::History<S, C, Sel, K>` right away. Rejected for M1 because `concat-project::Editor` is wired into `Session`, `Studio`, `concat-api`, and `concat-mcp`; extending `Editor` directly keeps changes minimal, preserves all existing Concat tests, and satisfies `ponytail` anti-bloat.
+
+## Decision 2: Lease-based Recoverable Lock (`SessionLease`) & Live-Attach Ownership
+- **Decision:** Introduce `concat_host::lease::SessionLease` (`src/crates/concat-host/src/lease.rs`) + `LiveSessionCoordinator` / `OpenProjects` live-attachment (`src/crates/concat-api/src/lib.rs`) replacing hard `Refusal::Here(Holder::Window)` blocks with serialized single-writer `EditorCore` access.
+- **Rationale:** Currently `concat_host::lock::ProjectLock` holds an OS `flock` (`concat.lock`) and `OpenProjects::claim` refuses `Holder::Api` whenever `Holder::Window` has the project open (`concat-api/src/lib.rs:186`). By maintaining a `SessionLease` with `session_id`, `client_pid`, `last_heartbeat_at`, `grace_period_ms` (default `8000` ms, bounded `5000..=10000` ms), and `active_turn_id`, any crashed client (`SIGKILL`) is detected via dead PID or expired heartbeat grace period, any uncommitted `AgentTurn` is rolled back automatically, and a new client or manual editor action can resume safely (`I2`, `P8`).
+- **Alternatives considered:** Removing locking altogether. Rejected because concurrent unserialized writers corrupt project state and `document.json`.
+
+## Decision 3: Strict `ViewState` vs `DocumentState` Isolation (`P4`)
+- **Decision:** Keep all transient UI state (`Studio::selection`, `playhead`, `zoom`, `scroll`, `accepted_turns` / `agent_highlight_clips`) strictly outside `Editor::apply` and `Studio::after_change()` / `schedule_autosave()`, and provide a testable headless `HybridDocumentHarness` / `Session` regression test verifying 20 selection + 20 playhead operations produce `0` undo entries and `0` disk writes.
+- **Rationale:** `Studio::after_change()` (`src/crates/concat/src/studio/edit.rs:457`) triggers `revision += 1`, `dirty = true`, and `schedule_autosave()`. Selection (`clip_pressed` when not dragging) and playhead (`seek`) must only update UI/preview and never enter `Editor::undo` or invoke `save_document` (`P4`).
+- **Alternatives considered:** Debouncing autosave to 50ms. Rejected explicitly by Constitution & `kit/PITFALLS_AND_FIXES.md`.
+
+## Decision 4: External Data Directory (`I5`) in `concat_host::dirs::AppDirs`
+- **Decision:** Check `HYBRID_EDIT_DATA_DIR` environment variable first in `AppDirs::locate()` (`src/crates/concat-host/src/dirs.rs`), and default macOS desktop path to `~/Library/Application Support/hybrid_edit_vid` (while preserving `AppDirs::under(root)` for tests and `adopt()` helper compatibility).
+- **Rationale:** Product Owner confirmed standard macOS path `~/Library/Application Support/hybrid_edit_vid` with `HYBRID_EDIT_DATA_DIR` override so automated tests and M2+ caches/SQLite/models never touch user data or repo source (`I5`).
+- **Alternatives considered:** Leaving `app.concat.editor`. Rejected so `hybrid_edit_vid` never collides with any standalone upstream Concat installation on the same Mac.
+
+## Decision 5: Hybrid Timeline Slint UI & `Accept` vs `Revert Turn` (`I1`, `I3`)
+- **Decision:** Add `agent_modified: bool` to `ClipData` (`src/crates/concat/ui/timeline/model.slint` & `lanes.slint`), render a subtle non-destructive accent/badge on agent-touched clips, and add an Agent Turn HUD strip (active turn summary + Cancel, or committed turn `Accept` / `Revert Turn`) in `ui/timeline/tray.slint` / `ui/editor.slint`. Clicking `Accept` adds the `turn_id` to UI `ViewState` dismissed highlights without touching Undo history; clicking `Revert Turn` calls `Studio::revert_agent_turn()` when that turn is at the top of `undo` (or warns cleanly if newer manual edits sit above it).
+- **Rationale:** Matches PO Clarification Gate #6 (`Accept` keeps `Cmd+Z` intact) and keeps all UI highlights strictly in Slint chrome so `concat_export` / `concat_host::preview` frames remain untouched (`I3`, `P2`).

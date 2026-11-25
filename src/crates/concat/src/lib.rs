@@ -1353,6 +1353,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     editor.on_redo(on_window!(|state| {
         state.redo();
     }));
+    editor.on_accept_agent_turn(on_window!(|state| {
+        state.accept_agent_turn();
+    }));
+    editor.on_revert_agent_turn(on_window!(|state| {
+        state.revert_agent_turn();
+    }));
+    editor.on_cancel_agent_turn(on_window!(|state| {
+        state.cancel_agent_turn();
+    }));
     editor.on_split(on_window!(|state| {
         let at = state.playhead;
         state.split_at(at, true);

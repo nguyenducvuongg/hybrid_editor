@@ -52,7 +52,9 @@ use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
 use concat_host::stabilize::{StabilizeRequest, Stabilizers};
 use concat_host::templates::{self, SlotFill};
-use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
+use concat_host::{
+    LeaseRole, LiveSession, ProjectInfo, Session, Titles, lock, media, now_unix_ms, projects,
+};
 use concat_project::Command;
 use concat_project::model::{Cover, VideoSettings};
 
@@ -158,6 +160,8 @@ struct Claim {
     /// `None` where the folder would not take a lock file - one that
     /// cannot be written - which costs the guard, not the open.
     _lock: Option<lock::ProjectLock>,
+    /// Shared live session handle when the window opens a project in Live-Attach mode (`I2`).
+    live: Option<Arc<Mutex<LiveSession>>>,
 }
 
 /// The project folders open on this machine and who has each, shared
@@ -202,11 +206,41 @@ impl OpenProjects {
                     Claim {
                         holder,
                         _lock: lock,
+                        live: None,
                     },
                 );
                 Ok(())
             }
         }
+    }
+
+    /// Claims `path` for `holder` with a shared [`LiveSession`] enabling Live-Attach (`I2`).
+    pub fn claim_live(
+        &self,
+        path: &str,
+        holder: Holder,
+        live: Arc<Mutex<LiveSession>>,
+    ) -> Result<(), Refusal> {
+        self.claim(path, holder)?;
+        let key = key_of(path);
+        let mut open = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(claim) = open.get_mut(&key) {
+            claim.live = Some(live);
+        }
+        Ok(())
+    }
+
+    /// Returns the shared [`LiveSession`] for `path` if Live-Attach is enabled (`I2`).
+    pub fn live_session(&self, path: &str) -> Option<Arc<Mutex<LiveSession>>> {
+        let key = key_of(path);
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+            .and_then(|claim| claim.live.clone())
     }
 
     /// Gives `path` back, whoever had it.
@@ -234,6 +268,8 @@ pub struct Api {
     dirs: AppDirs,
     /// Open projects by canonical folder path.
     sessions: BTreeMap<String, Session>,
+    /// Live-attached window sessions shared via `OpenProjects` (`I2`).
+    live_sessions: BTreeMap<String, Arc<Mutex<LiveSession>>>,
     /// Where this API may write: a created project, an instantiated
     /// template, an export or a preview file lands under one of these.
     /// Empty means anywhere, for the process's own owner at a terminal.
@@ -318,6 +354,7 @@ impl Api {
             monitor: Monitor::new(),
             exporter: Exporter::new(),
             sessions: BTreeMap::new(),
+            live_sessions: BTreeMap::new(),
             roots: Vec::new(),
             open: OpenProjects::default(),
             events,
@@ -469,7 +506,15 @@ impl Api {
                 Ok(Reply::Done(Done {}))
             }
             Request::ProjectList => Ok(Reply::Projects(self.recents())),
-            Request::ProjectGet { path } => view(self.session(&path)?.view()),
+            Request::ProjectGet { path } => {
+                if let Some(live) = self.live_sessions.get(&key_of(&path)) {
+                    let guard = live
+                        .lock()
+                        .map_err(|_| ApiError::failed("live session lock poisoned"))?;
+                    return view(guard.session().view());
+                }
+                view(self.session(&path)?.view())
+            }
             Request::ProjectDocument { path } => {
                 Ok(Reply::Document(self.session(&path)?.document()))
             }
@@ -668,8 +713,24 @@ impl Api {
     /// [`Request::ProjectOpen`].
     pub fn open(&mut self, path: &str) -> Result<EditorView, ApiError> {
         let key = key_of(path);
+        if let Some(live) = self.live_sessions.get(&key) {
+            let guard = live
+                .lock()
+                .map_err(|_| ApiError::failed("live session lock poisoned"))?;
+            return Ok(guard.session().view());
+        }
         if let Some(session) = self.sessions.get(&key) {
             return Ok(session.view());
+        }
+        if let Some(live) = self.open.live_session(path) {
+            let view = {
+                let guard = live
+                    .lock()
+                    .map_err(|_| ApiError::failed("live session lock poisoned"))?;
+                guard.session().view()
+            };
+            self.live_sessions.insert(key, live);
+            return Ok(view);
         }
         let info = projects::open(path).map_err(ApiError::failed)?;
         self.adopt(info)
@@ -710,12 +771,16 @@ impl Api {
 
     /// [`Request::ProjectClose`].
     pub fn close(&mut self, path: &str, save: bool) -> Result<(), ApiError> {
+        let key = key_of(path);
+        if self.live_sessions.remove(&key).is_some() {
+            return Ok(());
+        }
         if save {
             self.save(path, None)?;
         }
         let closed = self
             .sessions
-            .remove(&key_of(path))
+            .remove(&key)
             .map(drop)
             .ok_or_else(|| not_open(path));
         if closed.is_ok() {
@@ -742,6 +807,18 @@ impl Api {
 
     /// [`Request::EditApply`].
     pub fn apply(&mut self, path: &str, command: Command) -> Result<EditorView, ApiError> {
+        if let Some(live) = self.live_sessions.get(&key_of(path)) {
+            let mut guard = live
+                .lock()
+                .map_err(|_| ApiError::failed("live session lock poisoned"))?;
+            let caller = format!("api-{}", std::process::id());
+            guard
+                .acquire_lease(&caller, std::process::id(), LeaseRole::LiveAgent, now_unix_ms())
+                .map_err(|e| ApiError::new(ErrorCode::Refused, e.to_string()))?;
+            let result = guard.apply_for(Some(&caller), command).map_err(refused);
+            let _ = guard.release_lease(&caller);
+            return result.map(|(v, _)| v);
+        }
         self.session_mut(path)?.apply(command).map_err(refused)
     }
 
@@ -2993,5 +3070,58 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+
+    #[test]
+    fn live_attach_shares_window_session_and_serializes_writes() {
+        let (mut api, scratch, _events) = api();
+        let path = project(&mut api, &scratch, "Live");
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+
+        let info = projects::open(&path).expect("info");
+        let session = Session::open_info(&info).expect("open");
+        let lease_dir = scratch.path().join("leases");
+        let live = Arc::new(Mutex::new(LiveSession::new(
+            session,
+            lease_dir,
+            std::time::Duration::from_secs(6),
+        )));
+        let open = OpenProjects::default();
+        open.claim_live(&path, Holder::Window, Arc::clone(&live))
+            .expect("window claims live");
+        api.share_open_projects(open);
+
+        // API attaches live while Window holds the project (I2).
+        let opened = view(ok(api.dispatch(Request::ProjectOpen { path: path.clone() })));
+        let initial_tracks = opened.project.active().tracks.len();
+
+        let edited = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddTrack { bottom: false }),
+        })));
+        assert_eq!(edited.project.active().tracks.len(), initial_tracks + 1);
+        assert_eq!(
+            live.lock().unwrap().session().project().active().tracks.len(),
+            initial_tracks + 1,
+            "window live session observes API mutation immediately"
+        );
+
+        // Busy lease held by another agent rejects concurrent API edit cleanly.
+        {
+            let mut guard = live.lock().unwrap();
+            guard
+                .acquire_lease("other-agent", std::process::id(), LeaseRole::LiveAgent, now_unix_ms())
+                .expect("other agent holds lease");
+        }
+        let busy = err(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddTrack { bottom: false }),
+        }));
+        assert_eq!(busy.code, ErrorCode::Refused);
+
+        ok(api.dispatch(Request::ProjectClose { path, save: false }));
     }
 }

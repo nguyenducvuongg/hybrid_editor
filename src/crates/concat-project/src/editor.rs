@@ -31,12 +31,94 @@ use crate::model::{Clip, Project};
 
 const UNDO_DEPTH: usize = 200;
 
-/// The state before one recorded step, and the gesture it belonged to.
+/// Metadata describing a committed transactional `AgentTurn` on the Undo stack.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TurnMeta {
+    /// Unique turn identifier.
+    pub turn_id: String,
+    /// Human-readable turn summary for Hybrid Timeline HUD and Undo display.
+    pub summary: String,
+    /// Deduplicated clip IDs added or modified by this turn.
+    pub affected_clip_ids: Vec<String>,
+    /// Document revision after the turn committed.
+    pub revision: u64,
+}
+
+/// Result returned when an `AgentTurn` commits cleanly.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TurnCommit {
+    /// Committed turn identifier.
+    pub turn_id: String,
+    /// Turn summary.
+    pub summary: String,
+    /// Document revision after commit.
+    pub revision: u64,
+    /// Clip IDs added or modified relative to the pre-turn baseline.
+    pub affected_clip_ids: Vec<String>,
+    /// True if at least one document change was pushed as 1 Undo step.
+    pub pushed_undo_step: bool,
+}
+
+/// Errors from transactional `AgentTurn` lifecycle calls.
+#[derive(Clone, PartialEq, Debug)]
+pub enum TurnError {
+    /// Another turn is already open.
+    AlreadyActive {
+        /// Currently open turn identifier.
+        active_turn_id: String,
+    },
+    /// No turn is currently active.
+    NotActive,
+    /// Caller supplied a `turn_id` that does not match the active turn.
+    TurnMismatch {
+        /// Active turn identifier.
+        expected: String,
+        /// Supplied turn identifier.
+        actual: String,
+    },
+    /// Turn validation failed (e.g. empty turn_id or summary).
+    Invalid(String),
+    /// An underlying edit command failed inside the turn.
+    CommandFailed(CommandError),
+}
+
+impl std::fmt::Display for TurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TurnError::AlreadyActive { active_turn_id } => {
+                write!(f, "agent turn {active_turn_id} is already active")
+            }
+            TurnError::NotActive => f.write_str("no agent turn is currently active"),
+            TurnError::TurnMismatch { expected, actual } => {
+                write!(f, "active agent turn is {expected}, got {actual}")
+            }
+            TurnError::Invalid(msg) => f.write_str(msg),
+            TurnError::CommandFailed(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for TurnError {}
+
+struct ActiveAgentTurn {
+    turn_id: String,
+    summary: String,
+    baseline_project: Project,
+    command_count: usize,
+}
+
+/// The state before one recorded step, and the gesture/turn it belonged to.
 struct Snapshot {
     before: Project,
     /// Set while the gesture that produced this step may still continue;
     /// cleared by [`Editor::end_gesture`] or by any step of another kind.
     gesture: Option<String>,
+    turn: Option<TurnMeta>,
+}
+
+struct RedoEntry {
+    after: Project,
+    turn: Option<TurnMeta>,
 }
 
 /// One editing session: the project, the id mint that keeps its ids unique,
@@ -45,10 +127,12 @@ struct Snapshot {
 pub struct Editor {
     project: Project,
     mint: IdMint,
+    revision: u64,
+    active_turn: Option<ActiveAgentTurn>,
     /// Oldest snapshot at the front: overflowing the depth cap evicts from
     /// the front in constant time, where a Vec would shuffle the whole stack.
     undo: VecDeque<Snapshot>,
-    redo: Vec<Project>,
+    redo: Vec<RedoEntry>,
 }
 
 impl Editor {
@@ -62,6 +146,8 @@ impl Editor {
         Self {
             project: Project::with_video(video),
             mint: IdMint::default(),
+            revision: 0,
+            active_turn: None,
             undo: VecDeque::new(),
             redo: Vec::new(),
         }
@@ -77,6 +163,8 @@ impl Editor {
         Some(Self {
             project,
             mint,
+            revision: 0,
+            active_turn: None,
             undo: VecDeque::new(),
             redo: Vec::new(),
         })
@@ -207,13 +295,143 @@ impl Editor {
             self.undo.push_back(Snapshot {
                 before,
                 gesture: gesture.map(str::to_owned),
+                turn: None,
             });
             if self.undo.len() > UNDO_DEPTH {
                 self.undo.pop_front();
             }
         }
+        self.revision += 1;
         self.redo.clear();
         Ok(outcome)
+    }
+
+    /// Current monotonic document revision. Increments only on `DocumentState` mutations.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Active uncommitted turn identifier, if any.
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.active_turn.as_ref().map(|t| t.turn_id.as_str())
+    }
+
+    /// Metadata of the latest undoable `AgentTurn`, if it sits at the top of the Undo stack.
+    pub fn top_undo_turn(&self) -> Option<&TurnMeta> {
+        self.undo.back().and_then(|s| s.turn.as_ref())
+    }
+
+    /// Opens a transactional `AgentTurn` capturing the current `Project` baseline.
+    pub fn begin_agent_turn(&mut self, turn_id: &str, summary: &str) -> Result<(), TurnError> {
+        if turn_id.trim().is_empty() || turn_id.len() > 64 {
+            return Err(TurnError::Invalid("turn_id must be 1..=64 bytes".into()));
+        }
+        let summary_trimmed = summary.trim();
+        if summary_trimmed.is_empty() {
+            return Err(TurnError::Invalid("turn summary must not be empty".into()));
+        }
+        if let Some(active) = &self.active_turn {
+            return Err(TurnError::AlreadyActive {
+                active_turn_id: active.turn_id.clone(),
+            });
+        }
+        self.end_gesture();
+        self.active_turn = Some(ActiveAgentTurn {
+            turn_id: turn_id.to_owned(),
+            summary: summary_trimmed.chars().take(160).collect(),
+            baseline_project: self.project.clone(),
+            command_count: 0,
+        });
+        Ok(())
+    }
+
+    /// Executes a command inside the active `AgentTurn` without pushing an Undo frame yet.
+    pub fn apply_in_turn(
+        &mut self,
+        turn_id: &str,
+        command: Command,
+    ) -> Result<Outcome, TurnError> {
+        let Some(active) = &self.active_turn else {
+            return Err(TurnError::NotActive);
+        };
+        if active.turn_id != turn_id {
+            return Err(TurnError::TurnMismatch {
+                expected: active.turn_id.clone(),
+                actual: turn_id.to_owned(),
+            });
+        }
+        if command.is_view_state() {
+            return apply(&mut self.project, &mut self.mint, command)
+                .map_err(TurnError::CommandFailed);
+        }
+        let before_step = self.project.clone();
+        let outcome =
+            apply(&mut self.project, &mut self.mint, command).map_err(TurnError::CommandFailed)?;
+        if outcome.applied {
+            self.tidy_touched(&before_step);
+            self.follow_first_hdr(&before_step);
+            if let Some(active) = self.active_turn.as_mut() {
+                active.command_count += 1;
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Commits the active `AgentTurn` as 1 unified Undo/Redo step.
+    pub fn commit_agent_turn(&mut self, turn_id: &str) -> Result<TurnCommit, TurnError> {
+        let Some(active) = self.active_turn.as_ref() else {
+            return Err(TurnError::NotActive);
+        };
+        if active.turn_id != turn_id {
+            return Err(TurnError::TurnMismatch {
+                expected: active.turn_id.clone(),
+                actual: turn_id.to_owned(),
+            });
+        }
+        let active = self.active_turn.take().expect("checked");
+        let affected_clip_ids = touched_clip_ids(&active.baseline_project, &self.project);
+        let changed = active.command_count > 0 && self.project != active.baseline_project;
+        if changed {
+            self.revision += 1;
+            let meta = TurnMeta {
+                turn_id: active.turn_id.clone(),
+                summary: active.summary.clone(),
+                affected_clip_ids: affected_clip_ids.clone(),
+                revision: self.revision,
+            };
+            self.undo.push_back(Snapshot {
+                before: active.baseline_project,
+                gesture: None,
+                turn: Some(meta),
+            });
+            if self.undo.len() > UNDO_DEPTH {
+                self.undo.pop_front();
+            }
+            self.redo.clear();
+        }
+        Ok(TurnCommit {
+            turn_id: active.turn_id,
+            summary: active.summary,
+            revision: self.revision,
+            affected_clip_ids,
+            pushed_undo_step: changed,
+        })
+    }
+
+    /// Rolls back the active uncommitted `AgentTurn`, restoring the exact pre-turn baseline.
+    pub fn rollback_agent_turn(&mut self, turn_id: &str) -> Result<u64, TurnError> {
+        let Some(active) = self.active_turn.as_ref() else {
+            return Err(TurnError::NotActive);
+        };
+        if active.turn_id != turn_id {
+            return Err(TurnError::TurnMismatch {
+                expected: active.turn_id.clone(),
+                actual: turn_id.to_owned(),
+            });
+        }
+        let active = self.active_turn.take().expect("checked");
+        self.project = active.baseline_project;
+        Ok(self.revision)
     }
 
     /// Runs [`Clip::tidy`] over every clip the command wrote, so the clamps
@@ -314,8 +532,12 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         match self.undo.pop_back() {
             Some(previous) => {
-                self.redo
-                    .push(std::mem::replace(&mut self.project, previous.before));
+                let after = std::mem::replace(&mut self.project, previous.before);
+                self.redo.push(RedoEntry {
+                    after,
+                    turn: previous.turn,
+                });
+                self.revision += 1;
                 true
             }
             None => false,
@@ -326,11 +548,13 @@ impl Editor {
     pub fn redo(&mut self) -> bool {
         match self.redo.pop() {
             Some(next) => {
-                let before = std::mem::replace(&mut self.project, next);
+                let before = std::mem::replace(&mut self.project, next.after);
                 self.undo.push_back(Snapshot {
                     before,
                     gesture: None,
+                    turn: next.turn,
                 });
+                self.revision += 1;
                 true
             }
             None => false,
@@ -362,10 +586,157 @@ impl Default for Editor {
 }
 
 /// The clips [`Editor::drop_retired_fields`] found, by name, each once.
+/// Retired fields struct.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RetiredFields {
     /// Clips an earlier version played backwards, which now play forwards.
     pub reversed: Vec<String>,
     /// Clips an earlier version moved with a preset animation.
     pub animated: Vec<String>,
+}
+
+/// Returns deduplicated IDs of clips added or modified between `before` and `after`.
+pub fn touched_clip_ids(before: &Project, after: &Project) -> Vec<String> {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    let old_clips: HashMap<&str, *const Clip> = before
+        .timelines
+        .iter()
+        .flat_map(|tl| tl.clips.iter())
+        .map(|c| (c.id.as_str(), Arc::as_ptr(c)))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for tl in &after.timelines {
+        for clip in &tl.clips {
+            let ptr = Arc::as_ptr(clip);
+            let changed = old_clips
+                .get(clip.id.as_str())
+                .is_none_or(|old_ptr| *old_ptr != ptr);
+            if changed && seen.insert(clip.id.clone()) {
+                out.push(clip.id.clone());
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod agent_turn_tests {
+    use super::*;
+    use crate::commands::{Command, NewMedia};
+    use crate::model::MediaKind;
+
+    #[test]
+    fn agent_turn_groups_multiple_edits_into_single_undo_redo_and_supports_rollback() {
+        let mut editor = Editor::new();
+        let media_id = editor
+            .apply(Command::AddMedia {
+                item: NewMedia {
+                    path: "/tmp/sample.mp4".into(),
+                    name: "sample.mp4".into(),
+                    duration: Some(10.0),
+                    kind: MediaKind::Video,
+                    width: Some(1920),
+                    height: Some(1080),
+                    frame_rate: Some(30.0),
+                    frame_rate_fraction: Some("30/1".into()),
+                    video_codec: Some("h264".into()),
+                    audio_codec: Some("aac".into()),
+                    has_audio: true,
+                    audio_tracks: Vec::new(),
+                    origin: None,
+                    color_space: Default::default(),
+                },
+            })
+            .expect("add media")
+            .created_id
+            .expect("media id");
+        let track_id = editor.project().active().tracks[0].id.clone();
+
+        // 1. Open transactional AgentTurn and apply 3 commands.
+        editor
+            .begin_agent_turn("turn-1", "Rough cut test")
+            .expect("begin turn");
+        let c1 = editor
+            .apply_in_turn(
+                "turn-1",
+                Command::AddClip {
+                    media_id: media_id.clone(),
+                    track_id: track_id.clone(),
+                    start: 0.0,
+                    ripple: false,
+                },
+            )
+            .expect("clip 1")
+            .created_id
+            .expect("id1");
+        let c2 = editor
+            .apply_in_turn(
+                "turn-1",
+                Command::AddClip {
+                    media_id: media_id.clone(),
+                    track_id: track_id.clone(),
+                    start: 2.0,
+                    ripple: false,
+                },
+            )
+            .expect("clip 2")
+            .created_id
+            .expect("id2");
+        editor
+            .apply_in_turn(
+                "turn-1",
+                Command::MoveClips {
+                    moves: vec![crate::commands::ClipMove {
+                        clip_id: c2.clone(),
+                        start: 15.0,
+                        track_id: track_id.clone(),
+                    }],
+                },
+            )
+            .expect("move clip 2");
+
+        let commit = editor.commit_agent_turn("turn-1").expect("commit turn");
+        assert_eq!(commit.turn_id, "turn-1");
+        assert!(commit.pushed_undo_step);
+        assert!(commit.affected_clip_ids.contains(&c1));
+        assert!(commit.affected_clip_ids.contains(&c2));
+        assert_eq!(editor.project().active().clips.len(), 2);
+
+        // Single undo reverts the entire 3-command turn back to 0 clips.
+        assert!(editor.undo());
+        assert_eq!(editor.project().active().clips.len(), 0);
+        // Single redo reapplies all 3 edits together.
+        assert!(editor.redo());
+        assert_eq!(editor.project().active().clips.len(), 2);
+        assert_eq!(
+            editor.project().active().clip(&c2).expect("c2").start,
+            15.0
+        );
+
+        // 2. Rollback discards uncommitted edits cleanly.
+        editor
+            .begin_agent_turn("turn-2", "Aborted turn")
+            .expect("begin turn 2");
+        editor
+            .apply_in_turn(
+                "turn-2",
+                Command::AddClip {
+                    media_id,
+                    track_id,
+                    start: 10.0,
+                    ripple: false,
+                },
+            )
+            .expect("temp clip");
+        assert_eq!(editor.project().active().clips.len(), 3);
+        editor.rollback_agent_turn("turn-2").expect("rollback");
+        assert_eq!(editor.project().active().clips.len(), 2);
+        // Top undo step is still turn-1, not turn-2.
+        assert_eq!(
+            editor.top_undo_turn().map(|m| m.turn_id.as_str()),
+            Some("turn-1")
+        );
+    }
 }

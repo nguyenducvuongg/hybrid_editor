@@ -21,15 +21,13 @@
 
 use std::path::{Path, PathBuf};
 
-/// The app identifier, which is also the folder name everywhere. Every
-/// release so far has used it; a phone treats a new one as another app,
-/// so it changes only with a domain of the project's own behind it.
-pub const IDENTIFIER: &str = "app.concat.editor";
+/// Environment variable overriding the external data directory (`I5`).
+pub const HYBRID_DATA_DIR_ENV: &str = "HYBRID_EDIT_DATA_DIR";
 
-/// The identifier builds of `main` used between 2026-10-26 and
-/// 2026-11-04, never released. Those builds moved the folder to it and
-/// left a link at the old name, which [`IDENTIFIER`] now finds again;
-/// [`adopt`] moves the folder back where there is no link.
+/// The app identifier, which is also the folder name on macOS.
+pub const IDENTIFIER: &str = "hybrid_edit_vid";
+
+/// Former upstream identifier retained for compatibility adoption helpers.
 const FORMER_IDENTIFIER: &str = "org.standalones.concat";
 
 /// The app's own directories on this machine.
@@ -43,15 +41,32 @@ pub struct AppDirs {
 
 impl AppDirs {
     /// The platform's directories for this app, created lazily by whoever
-    /// writes into them - or the `portable` folder beside the executable,
-    /// when there is one.
+    /// writes into them - honoring `HYBRID_EDIT_DATA_DIR` first (`I5`),
+    /// then a `portable` folder beside the executable, then macOS default.
     pub fn locate() -> Result<AppDirs, String> {
+        let override_dir = std::env::var(HYBRID_DATA_DIR_ENV).ok();
+        let home_dir = home().ok();
+        Self::resolve_with(override_dir.as_deref(), home_dir.as_deref())
+    }
+
+    /// Resolves `AppDirs` given an optional `HYBRID_EDIT_DATA_DIR` override and home path.
+    pub fn resolve_with(
+        hybrid_override: Option<&str>,
+        home_dir: Option<&Path>,
+    ) -> Result<AppDirs, String> {
+        if let Some(raw) = hybrid_override.map(str::trim).filter(|s| !s.is_empty()) {
+            return Ok(AppDirs::under(Path::new(raw)));
+        }
         if let Some(portable) = portable_root() {
             return Ok(AppDirs::under(&portable));
         }
+        let home_path = match home_dir {
+            Some(p) => p.to_path_buf(),
+            None => home()?,
+        };
         let convention = convention(std::env::consts::OS);
         if convention == Convention::Apple {
-            let dirs = apple(&home()?, cfg!(target_os = "ios"));
+            let dirs = apple(&home_path, cfg!(target_os = "ios"));
             adopt(&dirs.config);
             adopt(&dirs.data);
             Ok(dirs)
@@ -68,9 +83,6 @@ impl AppDirs {
             move_data(&config, &data);
             Ok(AppDirs { config, data })
         } else {
-            // Linux follows the XDG split. Android arrives here too: the
-            // activity names both bases before the window starts, since an
-            // app process there has no home directory to derive them from.
             let base = |variable: &str| {
                 std::env::var_os(variable)
                     .map(PathBuf::from)
@@ -78,11 +90,11 @@ impl AppDirs {
             };
             let config_base = match base("XDG_CONFIG_HOME") {
                 Some(path) => path,
-                None => home()?.join(".config"),
+                None => home_path.join(".config"),
             };
             let data_base = match base("XDG_DATA_HOME") {
                 Some(path) => path,
-                None => home()?.join(".local").join("share"),
+                None => home_path.join(".local").join("share"),
             };
             let dirs = AppDirs {
                 config: config_base.join(IDENTIFIER),
@@ -92,6 +104,11 @@ impl AppDirs {
             adopt(&dirs.data);
             Ok(dirs)
         }
+    }
+
+    /// Subdirectory storing recoverable session leases (`HYBRID_EDIT_DATA_DIR/leases`).
+    pub fn leases(&self) -> PathBuf {
+        self.data.join("leases")
     }
 
     /// Both directories under one root. For tests, and for anyone running
@@ -291,7 +308,7 @@ mod tests {
 
     #[test]
     fn the_directories_are_named_by_the_identifier() {
-        let dirs = AppDirs::locate().expect("locates");
+        let dirs = AppDirs::resolve_with(None, None).expect("locates");
         assert!(dirs.config.ends_with(IDENTIFIER));
         assert!(dirs.data.ends_with(IDENTIFIER));
         assert!(dirs.config.is_absolute());
@@ -372,5 +389,20 @@ mod tests {
         move_data(&roaming, &local);
         assert!(local.join("whisper-models").join("base.bin").is_file());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hybrid_edit_data_dir_override_and_macos_default() {
+        let override_dir = std::env::temp_dir().join("hybrid-edit-data-dir-test");
+        let dirs = AppDirs::resolve_with(Some(override_dir.to_string_lossy().as_ref()), Some(Path::new("/Users/tester"))).expect("resolves override");
+        assert_eq!(dirs.config, override_dir);
+        assert_eq!(dirs.data, override_dir);
+
+        let default_dirs = AppDirs::resolve_with(None, Some(Path::new("/Users/tester"))).expect("resolves default");
+        let expected = Path::new("/Users/tester/Library/Application Support/hybrid_edit_vid");
+        if cfg!(target_os = "macos") {
+            assert_eq!(default_dirs.config, expected);
+            assert_eq!(default_dirs.data, expected);
+        }
     }
 }
