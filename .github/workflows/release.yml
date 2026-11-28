@@ -61,10 +61,10 @@ jobs:
       - name: Upload DMG, SHA-256 & appcast artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: editroom-macos-dmg
+          name: hybrid-editor-macos-dmg
           path: |
-            dist/Editroom-*.dmg
-            dist/Editroom-*.dmg.sha256
+            dist/Hybrid-Editor-*.dmg
+            dist/Hybrid-Editor-*.dmg.sha256
             dist/appcast.xml
 
       - name: Create GitHub Release on tag push
@@ -72,7 +72,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: |
+            ## Hybrid Editor v2.0.0 (macOS Apple Silicon — Open-Source Beta)
+
+            ### Highlights
+            - **Hybrid Editor Rebrand & Dark-Mode Icon:** Updated display name, macOS dark squircle app icon, and Sparkle feed/DMG artifacts.
+            - **Antigravity 2.0 (`agy`) Primary Agent & Unified Apple HIG AI Sidebar:** Merged toolbar button (`Hybrid AI`, `⌘L`) with `Agent | Quick Cut` modes, dual MCP config sync (`~/.gemini/config` & `~/.gemini/antigravity`), and refreshed `Settings > AI & MCP`.
+            - **Vietnamese Creator Suite & Studio Engine:** Word-level Karaoke/CapCut captions, BGM auto-ducking, beat-sync cuts, visual B-Roll FTS5 browser, Apple Vision Auto-Reframe (`16:9 → 9:16`), ComfyUI Workflow Gallery + WebSocket progress, and `Settings > Explore` catalog.
+
+            ### First-Launch Gatekeeper Note (Ad-Hoc Signed Beta)
+            After dragging `Editroom.app` (**Hybrid Editor**) to `/Applications`, clear quarantine once in Terminal before opening (or Right-click → Open):
+            ```zsh
+            xattr -cr /Applications/Editroom.app
+            ```
           files: |
-            dist/Editroom-*.dmg
-            dist/Editroom-*.dmg.sha256
+            dist/Hybrid-Editor-*.dmg
+            dist/Hybrid-Editor-*.dmg.sha256
             dist/appcast.xml
