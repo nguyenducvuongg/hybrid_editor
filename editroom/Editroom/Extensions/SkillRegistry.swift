@@ -323,6 +323,92 @@ final class SkillRegistry: ObservableObject {
         return meta
     }
 
+    static let builtInSkillSpecs: [(id: String, markdown: String)] = [
+        ("aroll-rough-cut", """
+        ---
+        name: aroll-rough-cut
+        description: Cắt dựng thô A-roll tiếng Việt với Whisper Metal + VAD lọc khoảng lặng, giữ câu nói tự nhiên trong 1 AgentTurn có thể Undo.
+        ---
+
+        # A-Roll Rough-Cut (Tiếng Việt + VAD Guard)
+        1. Gọi `get_project` lấy `clip_id` A-roll trên `V1`.
+        2. Gọi `transcribe_aroll(language: "vi", min_silence_sec: 0.7, pad_sec: 0.12)` để nhận `speech_spans`, `words` và `suggested_keep_ranges` (VAD chống ảo giác P6).
+        3. Mở 1 `AgentTurn` (nếu chưa có) và gọi `apply_edl_patch` (`keep_ranges`, `coord: "source"`, `ripple: true`).
+        4. Kiểm tra trực quan bằng `preview_timeline_strip` trước khi chốt.
+        """),
+        ("smart-broll-inserter", """
+        ---
+        name: smart-broll-inserter
+        description: Chèn B-roll thông minh theo thác 3 tầng tự động (Local B-Roll FTS5 -> Free Stock Pexels/Pixabay -> ComfyUI Colab) vào V2+ trong 1 AgentTurn.
+        ---
+
+        # Smart B-Roll Inserter (Thác Tự Động 3 Tầng)
+        1. Tầng 1: Gọi `search_broll(query: "<ngữ cảnh>", limit: 6)` (nếu index rỗng, chạy `index_broll_folder`).
+        2. Tầng 2: Nếu `fallback_tier == 2`, gọi `search_stock_media` -> `import_stock_media`.
+        3. Tầng 3: Nếu Stock chưa khớp hoặc cần cảnh đặc biệt, gọi `comfy_status` -> `comfy_generate`.
+        4. Đặt B-roll muted lên `V2`+ bằng `insert_broll_overlay(mute_audio: true)` và kiểm tra qua `preview_timeline_strip`.
+        """),
+        ("comfy-broll-generator", """
+        ---
+        name: comfy-broll-generator
+        description: Generate custom B-roll images, videos (including Image-to-Video from timeline frames), or audio on a remote Google Colab ComfyUI server and insert them onto the timeline.
+        ---
+
+        # ComfyUI B-Roll & Asset Generator
+        1. Call `comfy_status` first to verify Colab GPU connectivity, VRAM, and checkpoints.
+        2. Call `comfy_generate` (`kind`: `image`, `video`, or `audio`; pass `reference_clip_id` & `reference_time` for I2V).
+        3. Insert onto `V2`+ with `insert_broll_overlay` or `apply_edl_patch` (`insert_overlay`) and inspect via `preview_timeline_strip`.
+        """),
+        ("stock-media-finder", """
+        ---
+        name: stock-media-finder
+        description: Search Pexels and Pixabay for free B-roll photos and HD/4K videos matching timeline pacing, visually inspect candidates, and import chosen assets with attribution.
+        ---
+
+        # Free Stock Media Finder (Pexels / Pixabay)
+        1. Call `get_project` for sequence aspect ratio and gaps.
+        2. Call `search_stock_media` with `include_thumbnails: true` to inspect candidates visually.
+        3. Call `import_stock_media(stock_id: ...)` and place muted on `V2`+ with `insert_broll_overlay`, then verify via `preview_timeline_strip`.
+        """),
+    ]
+
+    /// Seeds the 4 built-in editor workflow skills idempotently into `baseDir`.
+    @discardableResult
+    func seedBuiltInSkills(force: Bool = false) -> Int {
+        let fm = FileManager.default
+        var installedCount = 0
+        for spec in Self.builtInSkillSpecs {
+            if !force, skills.contains(where: { $0.id == spec.id }) { continue }
+            let destDir = baseDir.appendingPathComponent(spec.id, isDirectory: true)
+            let skillURL = destDir.appendingPathComponent("SKILL.md")
+            do {
+                try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+                try spec.markdown.write(to: skillURL, atomically: true, encoding: .utf8)
+                let parsed = Self.parseSkillMarkdown(spec.markdown, fallbackName: spec.id)
+                let meta = SkillMetadata(
+                    id: spec.id,
+                    name: parsed.name,
+                    description: parsed.description,
+                    source: .builtIn,
+                    rootPath: destDir.path,
+                    skillFilePath: skillURL.path,
+                    enabled: true,
+                    installedAt: Date()
+                )
+                skills.removeAll { $0.id == spec.id }
+                skills.append(meta)
+                installedCount += 1
+            } catch {
+                continue
+            }
+        }
+        if installedCount > 0 {
+            skills.sort { $0.id < $1.id }
+            try? saveIndex()
+        }
+        return installedCount
+    }
+
     @discardableResult
     func installFromGitHub(_ rawURL: String, gitRunner: GitRunner = .system, idOverride: String? = nil) async throws -> SkillMetadata {
         let spec = try GitHubSpec.parse(rawURL)

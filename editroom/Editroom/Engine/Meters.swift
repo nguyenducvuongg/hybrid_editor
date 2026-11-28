@@ -17,7 +17,7 @@ struct MeterReading: Equatable {
 /// they need no hook into the audio itself. Values are dBFS.
 @MainActor
 final class MeterState: ObservableObject {
-    static let floor = -60.0
+    nonisolated static let floor = -60.0
 
     @Published private(set) var tracks: [UUID: MeterReading] = [:]
     /// The output, as one reading (the louder side) and per side.

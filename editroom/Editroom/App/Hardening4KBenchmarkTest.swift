@@ -2,8 +2,232 @@ import AppKit
 import AVFoundation
 import Darwin
 import Foundation
+import Network
+import SwiftUI
 
-/// Security Hardening, Antigravity 2.0 Live-Attach & 5-Round 4K E2E Benchmark (`H1–H6`):
+private final class HardeningOnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acquired = false
+    func tryAcquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !acquired else { return false }
+        acquired = true
+        return true
+    }
+}
+
+private final class SlowCancelMockProvider: AgentProvider, @unchecked Sendable {
+    let id = "slow-cancel-mock"
+    let displayName = "Slow Cancel Mock"
+    let kind: AgentProviderKind = .mock
+
+    func runTurn(
+        _ request: AgentRequest,
+        toolExecutor: @escaping @Sendable (String, [String: Any]) async throws -> [[String: Any]],
+        onEvent: @escaping @Sendable (AgentStreamEvent) -> Void
+    ) async throws -> String {
+        onEvent(.textDelta("Working "))
+        _ = try await toolExecutor("add_title", ["text": "ShouldRollback", "start": 0.0, "duration": 1.0])
+        try await Task.sleep(nanoseconds: 5_000_000_000)
+        return "Completed"
+    }
+}
+
+/// Loopback HTTP server verifying multimodal OpenAI/Gemini tool loops (`V2`) and ComfyUI checkpoint binding (`V4`).
+private final class LoopbackV11MockServer: @unchecked Sendable {
+    private var listener: NWListener?
+    private let queue = DispatchQueue(label: "local.editroom.mock.v11")
+    private let lock = NSLock()
+    private(set) var port: UInt16 = 0
+    private let pngBytes: Data
+
+    private(set) var openAISawImageURL = false
+    private(set) var geminiSawInlineData = false
+    private(set) var geminiDeclHadAdditionalProps = false
+    private(set) var comfyPostedCheckpoint: String?
+    private var openAICallCount = 0
+    private var geminiCallCount = 0
+
+    init(pngBytes: Data) {
+        self.pngBytes = pngBytes
+    }
+
+    func start() async throws {
+        let l = try NWListener(using: .tcp, on: .any)
+        l.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let gate = HardeningOnceGate()
+            l.stateUpdateHandler = { [weak self] st in
+                switch st {
+                case .ready:
+                    guard gate.tryAcquire() else { return }
+                    self?.port = l.port?.rawValue ?? 0
+                    cont.resume()
+                case .failed(let err):
+                    guard gate.tryAcquire() else { return }
+                    cont.resume(throwing: err)
+                default:
+                    break
+                }
+            }
+            l.start(queue: queue)
+        }
+        listener = l
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+    }
+
+    private func handle(_ conn: NWConnection) {
+        conn.start(queue: queue)
+        receive(conn, buffer: Data())
+    }
+
+    private func receive(_ conn: NWConnection, buffer: Data) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 2_097_152) { [weak self] chunk, _, isComplete, error in
+            guard let self else { return conn.cancel() }
+            var buf = buffer
+            if let chunk { buf.append(chunk) }
+            if let range = buf.range(of: Data("\r\n\r\n".utf8)) {
+                let headStr = String(data: buf[..<range.lowerBound], encoding: .utf8) ?? ""
+                let bodyStart = range.upperBound
+                var contentLength = 0
+                for line in headStr.components(separatedBy: "\r\n") {
+                    let lower = line.lowercased()
+                    if lower.hasPrefix("content-length:") {
+                        contentLength = Int(lower.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) ?? 0
+                    }
+                }
+                if buf.count >= bodyStart + contentLength {
+                    self.respond(conn, head: headStr, body: Data(buf[bodyStart..<(bodyStart + contentLength)]))
+                    return
+                }
+            }
+            if isComplete || error != nil {
+                conn.cancel()
+            } else {
+                self.receive(conn, buffer: buf)
+            }
+        }
+    }
+
+    private func respond(_ conn: NWConnection, head: String, body: Data) {
+        let firstLine = head.components(separatedBy: "\r\n").first ?? ""
+        let parts = firstLine.split(separator: " ").map(String.init)
+        let target = parts.count >= 2 ? parts[1] : "/"
+        let path = target.split(separator: "?").first.map(String.init) ?? "/"
+
+        func sendJSON(_ obj: Any, status: String = "200 OK") {
+            let d = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
+            let h = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(d.count)\r\nConnection: close\r\n\r\n"
+            conn.send(content: Data(h.utf8) + d, completion: .contentProcessed { _ in conn.cancel() })
+        }
+
+        if path == "/v1/chat/completions" {
+            let root = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            let msgs = (root["messages"] as? [[String: Any]]) ?? []
+            lock.lock()
+            openAICallCount += 1
+            let callNum = openAICallCount
+            lock.unlock()
+
+            if callNum == 1 {
+                sendJSON([
+                    "choices": [[
+                        "message": [
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [[
+                                "id": "tc-img-1",
+                                "type": "function",
+                                "function": ["name": "preview_timeline_strip", "arguments": "{\"timestamps\":[0.5]}"],
+                            ]],
+                        ],
+                    ]],
+                ])
+                return
+            }
+
+            let foundImg = msgs.contains { m in
+                guard (m["role"] as? String) == "user",
+                      let blocks = m["content"] as? [[String: Any]] else { return false }
+                return blocks.contains { b in
+                    ((b["image_url"] as? [String: Any])?["url"] as? String)?.hasPrefix("data:image/jpeg;base64,") == true
+                }
+            }
+            lock.lock()
+            if foundImg { openAISawImageURL = true }
+            lock.unlock()
+            sendJSON(["choices": [["message": ["role": "assistant", "content": "OpenAI saw the frame"]]]])
+            return
+        }
+
+        if path.contains(":generateContent") {
+            let root = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            let rawToolsText = String(data: body, encoding: .utf8) ?? ""
+            let contents = (root["contents"] as? [[String: Any]]) ?? []
+            lock.lock()
+            geminiCallCount += 1
+            let callNum = geminiCallCount
+            if rawToolsText.contains("additionalProperties") { geminiDeclHadAdditionalProps = true }
+            lock.unlock()
+
+            if callNum == 1 {
+                sendJSON([
+                    "candidates": [[
+                        "content": [
+                            "role": "model",
+                            "parts": [[
+                                "functionCall": ["name": "preview_timeline_strip", "args": ["timestamps": [0.5]]],
+                            ]],
+                        ],
+                    ]],
+                ])
+                return
+            }
+
+            let foundInline = contents.contains { c in
+                guard (c["role"] as? String) == "user",
+                      let pList = c["parts"] as? [[String: Any]] else { return false }
+                return pList.contains { part in
+                    let inline = part["inlineData"] as? [String: Any]
+                    return (inline?["mimeType"] as? String) == "image/jpeg" && !((inline?["data"] as? String) ?? "").isEmpty
+                }
+            }
+            lock.lock()
+            if foundInline { geminiSawInlineData = true }
+            lock.unlock()
+            sendJSON(["candidates": [["content": ["role": "model", "parts": [["text": "Gemini saw the frame"]]]]]])
+            return
+        }
+
+        switch path {
+        case "/object_info/CheckpointLoaderSimple":
+            sendJSON(["CheckpointLoaderSimple": ["input": ["required": ["ckpt_name": [["flux_schnell_real.safetensors"]]]]]])
+        case "/prompt":
+            let root = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            let promptGraph = (root["prompt"] as? [String: Any]) ?? [:]
+            let node4 = promptGraph["4"] as? [String: Any]
+            let inputs4 = node4?["inputs"] as? [String: Any]
+            lock.lock()
+            comfyPostedCheckpoint = inputs4?["ckpt_name"] as? String
+            lock.unlock()
+            sendJSON(["prompt_id": "mock-ckpt-1"])
+        case "/history/mock-ckpt-1":
+            sendJSON(["mock-ckpt-1": ["outputs": ["9": ["images": [["filename": "ckpt_out.png", "subfolder": "", "type": "output"]]]]]])
+        case "/view":
+            let h = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: \(pngBytes.count)\r\nConnection: close\r\n\r\n"
+            conn.send(content: Data(h.utf8) + pngBytes, completion: .contentProcessed { _ in conn.cancel() })
+        default:
+            sendJSON(["error": "not found"], status: "404 Not Found")
+        }
+    }
+}
+
+/// Security Hardening, Antigravity 2.0 Live-Attach & 5-Round 4K E2E Benchmark (`H1–H6` + `V1–V5`):
 /// `HYBRID_EDIT_DATA_DIR=... Editroom --hardening-4k-test <outDir>`
 @MainActor
 enum Hardening4KBenchmarkTest {
@@ -579,7 +803,195 @@ enum Hardening4KBenchmarkTest {
             return fail("H6", "error: \(error.localizedDescription)")
         }
 
-        log("ALL 6 HARDENING & 4K E2E CHECKS PASSED")
+        // =========================================================================
+        // V1: P0-1 In-App Tool Filter + import_media inside Active AgentTurn
+        // =========================================================================
+        do {
+            let inAppNames = Set(ChatSessionStore.inAppTools().compactMap { $0["name"] as? String })
+            guard inAppNames.contains("import_media"),
+                  inAppNames.contains("apply_edl_patch"),
+                  inAppNames.isDisjoint(with: MCPTools.hybridLifecycleTools) else {
+                return fail("V1", "ChatSessionStore.inAppTools did not strip hybridLifecycleTools cleanly")
+            }
+
+            let v1Model = EditorModel()
+            var p = Project()
+            p.width = 1280
+            p.height = 720
+            p.fps = 30
+            v1Model.load(p, url: nil)
+            try v1Model.beginAgentTurn(turnId: "v1-turn", summary: "Import inside turn", sessionId: "v1-sess")
+            let impOut = try await MCPTools.call("import_media", ["paths": [overlay4KPNG.path]], model: v1Model, client: nil, draft: v1Model.activeAgentTurn?.draft, isExternal: false)
+            guard let impRoot = try? JSONSerialization.jsonObject(with: Data(((impOut.first?["text"] as? String) ?? "{}").utf8)) as? [String: Any],
+                  let imported = impRoot["imported"] as? [[String: Any]],
+                  let aid = imported.first?["id"] as? String else {
+                return fail("V1", "import_media failed inside active AgentTurn")
+            }
+            _ = try await MCPTools.call("add_clip", ["asset_id": aid, "track": "V1", "start": 0.0], model: v1Model, client: nil, draft: v1Model.activeAgentTurn?.draft, isExternal: false)
+            _ = try v1Model.commitAgentTurn(turnId: "v1-turn")
+            guard v1Model.project.clips.count == 1 else {
+                return fail("V1", "imported asset inside AgentTurn was not usable by add_clip")
+            }
+            log("PASS [V1] In-app tool filtering & import_media inside AgentTurn verified")
+        } catch {
+            return fail("V1", "error: \(error.localizedDescription)")
+        }
+
+        // =========================================================================
+        // V2: P0-2/P0-3/P1-3 Multimodal Tool Forwarding, Gemini Sanitizer & Safe JSON Errors
+        // =========================================================================
+        let tinyPNG = (try? Data(contentsOf: overlay4KPNG)) ?? Data()
+        let v11Mock = LoopbackV11MockServer(pngBytes: tinyPNG)
+        do {
+            try await v11Mock.start()
+        } catch {
+            return fail("V2", "failed to start V11 mock server: \(error.localizedDescription)")
+        }
+        defer { v11Mock.stop() }
+
+        do {
+            let dirtySchema: [String: Any] = [
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": [
+                    "name": ["type": ["string", "null"], "default": "clip", "description": "Title"],
+                    "nested": ["type": "object", "properties": [:]],
+                ],
+                "required": ["name", "ghost_missing"],
+            ]
+            let sanitized = GeminiHTTPProvider.sanitizeGeminiSchema(dirtySchema)
+            let sProps = sanitized["properties"] as? [String: Any]
+            let nameSchema = sProps?["name"] as? [String: Any]
+            let nestedSchema = sProps?["nested"] as? [String: Any]
+            let reqList = sanitized["required"] as? [String]
+            guard sanitized["additionalProperties"] == nil,
+                  sanitized["$schema"] == nil,
+                  (nameSchema?["nullable"] as? Bool) == true,
+                  nameSchema?["default"] == nil,
+                  nestedSchema?["properties"] == nil,
+                  reqList == ["name"] else {
+                return fail("V2", "GeminiHTTPProvider.sanitizeGeminiSchema leaked unsupported keywords")
+            }
+
+            let errJSON = AgentToolFormatting.jsonError("Bad \"quote\"\nwith Bearer secret_token_1234567890")
+            guard let errData = errJSON.data(using: .utf8),
+                  let errObj = try? JSONSerialization.jsonObject(with: errData) as? [String: Any],
+                  let errMsg = errObj["error"] as? String,
+                  !errMsg.contains("secret_token_1234567890") else {
+                return fail("V2", "AgentToolFormatting.jsonError invalid JSON or leaked token")
+            }
+
+            let fakeJPEG = Data("fake-jpeg-bytes".utf8).base64EncodedString()
+            let dummyTool: [[String: Any]] = [["name": "preview_timeline_strip", "description": "Preview", "inputSchema": dirtySchema]]
+            let reqSnapshot = AgentRequest(
+                thread: ChatThread(projectKey: "v2", title: "V2", providerId: "mock", modelId: "mock"),
+                userPrompt: "Inspect frame",
+                systemPrompt: "Inspect.",
+                tools: dummyTool,
+                modelId: "mock"
+            )
+
+            let openAIProvider = OpenAICompatibleHTTPProvider(
+                endpointURL: URL(string: "http://127.0.0.1:\(v11Mock.port)/v1/chat/completions")!
+            )
+            let openAIReply = try await openAIProvider.runTurn(reqSnapshot, toolExecutor: { _, _ in
+                [["type": "image", "data": fakeJPEG, "mimeType": "image/jpeg"], ["type": "text", "text": "{\"ok\":true}"]]
+            }, onEvent: { _ in })
+            guard openAIReply == "OpenAI saw the frame", v11Mock.openAISawImageURL else {
+                return fail("V2", "OpenAICompatibleHTTPProvider did not forward image_url to model")
+            }
+
+            let geminiProvider = GeminiHTTPProvider(
+                baseURL: "http://127.0.0.1:\(v11Mock.port)",
+                apiKeyLookup: { "test-key-v2" }
+            )
+            let geminiReply = try await geminiProvider.runTurn(reqSnapshot, toolExecutor: { _, _ in
+                [["type": "image", "data": fakeJPEG, "mimeType": "image/jpeg"], ["type": "text", "text": "{\"ok\":true}"]]
+            }, onEvent: { _ in })
+            guard geminiReply == "Gemini saw the frame", v11Mock.geminiSawInlineData, !v11Mock.geminiDeclHadAdditionalProps else {
+                return fail("V2", "GeminiHTTPProvider did not forward inlineData or failed schema sanitization")
+            }
+            log("PASS [V2] Multimodal OpenAI/Gemini tool images, schema sanitizer & JSON error redaction verified")
+        } catch {
+            return fail("V2", "error: \(error.localizedDescription)")
+        }
+
+        // =========================================================================
+        // V3: P1-1 Active AgentTurn Cancellation + Rollback via ChatSessionStore
+        // =========================================================================
+        do {
+            let chatModel = EditorModel()
+            var p = Project()
+            p.width = 1280
+            p.height = 720
+            p.fps = 30
+            chatModel.load(p, url: nil)
+            let store = ChatSessionStore(baseDir: dataDir.appendingPathComponent("V3Chats", isDirectory: true))
+            let thread = store.createThread(for: chatModel.leaseProjectKey, title: "Cancel Test")
+            let cancelTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                store.cancelActiveTurn()
+            }
+            var caughtCancel = false
+            do {
+                _ = try await store.send(prompt: "Slow turn", in: thread.id, model: chatModel, provider: SlowCancelMockProvider())
+            } catch is CancellationError {
+                caughtCancel = true
+            } catch {
+                return fail("V3", "unexpected error instead of CancellationError: \(error.localizedDescription)")
+            }
+            _ = await cancelTask.value
+            guard caughtCancel,
+                  chatModel.activeAgentTurn == nil,
+                  chatModel.leaseManager.current == nil,
+                  chatModel.project.clips.isEmpty else {
+                return fail("V3", "cancelActiveTurn did not cleanly roll back uncommitted chat turn")
+            }
+            log("PASS [V3] In-app Chat cancelActiveTurn cleanly rolled back turn & released lease")
+        }
+
+        // =========================================================================
+        // V4: P1-2 ComfyUIClient Dynamic Checkpoint Auto-Binding
+        // =========================================================================
+        do {
+            var cPrefs = ComfyConnectionPrefs()
+            cPrefs.mode = .cloudflare
+            cPrefs.endpointURL = "http://127.0.0.1:\(v11Mock.port)"
+            let req = ComfyGenerationRequest(kind: .image, prompt: "Neon skyline", seed: 7)
+            let res = try await ComfyUIClient.shared.generate(req, prefs: cPrefs, outputFolder: outDir.appendingPathComponent("comfy_v4"))
+            guard fm.fileExists(atPath: res.localURL.path),
+                  v11Mock.comfyPostedCheckpoint == "flux_schnell_real.safetensors" else {
+                return fail("V4", "ComfyUIClient did not auto-bind checkpoint: \(String(describing: v11Mock.comfyPostedCheckpoint))")
+            }
+            log("PASS [V4] ComfyUIClient dynamic checkpoint auto-binding verified (flux_schnell_real.safetensors)")
+        } catch {
+            return fail("V4", "error: \(error.localizedDescription)")
+        }
+
+        // =========================================================================
+        // V5: P2-1 Built-in Skills Auto-Seeding + P1-5 StockLibraryView Thumbnail Smoke
+        // =========================================================================
+        do {
+            let reg = SkillRegistry(baseDir: dataDir.appendingPathComponent("AutoSeedSkills", isDirectory: true))
+            let seededFirst = reg.seedBuiltInSkills()
+            let seededSecond = reg.seedBuiltInSkills()
+            let ids = Set(reg.skills.map(\.id))
+            guard seededFirst == 4,
+                  seededSecond == 0,
+                  ids == Set(["aroll-rough-cut", "smart-broll-inserter", "comfy-broll-generator", "stock-media-finder"]),
+                  reg.skills.allSatisfy({ if case .builtIn = $0.source { return true }; return false }) else {
+                return fail("V5", "seedBuiltInSkills mismatch: first=\(seededFirst), second=\(seededSecond), ids=\(ids)")
+            }
+
+            let stockView = StockLibraryView(model: model)
+            let host = NSHostingView(rootView: stockView)
+            host.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+            host.layoutSubtreeIfNeeded()
+            log("PASS [V5] 4 built-in skills auto-seeded (.builtIn) + StockLibraryView smoke verified")
+        }
+
+        log("ALL 11 HARDENING, V1.1 AUDIT FIX & 4K E2E CHECKS PASSED")
         return true
     }
 }

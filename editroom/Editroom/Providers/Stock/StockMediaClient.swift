@@ -100,11 +100,12 @@ struct PexelsProvider: StockProviderProtocol {
                       let dlStr = (src["large2x"] as? String) ?? (src["original"] as? String),
                       let dlURL = URL(string: dlStr) else { return nil }
                 let preview = (src["medium"] as? String).flatMap(URL.init(string:))
+                let altTitle = (p["alt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return StockSearchItem(
                     id: "pexels-photo-\(pid)",
                     provider: "Pexels",
                     kind: .photos,
-                    title: (p["alt"] as? String)?.isEmpty == false ? (p["alt"] as! String) : "Pexels Photo \(pid)",
+                    title: altTitle.isEmpty ? "Pexels Photo \(pid)" : altTitle,
                     author: (p["photographer"] as? String) ?? "Pexels",
                     sourcePageURL: (p["url"] as? String) ?? "https://www.pexels.com",
                     licence: "Pexels License (Free to use)",

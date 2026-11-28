@@ -119,6 +119,7 @@ struct StockLibraryView: View {
                     LazyVStack(spacing: 8) {
                         ForEach(stock.lastResults) { item in
                             HStack(spacing: 8) {
+                                stockThumbnail(for: item)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title)
                                         .font(.system(size: 11.5, weight: .medium))
@@ -132,7 +133,10 @@ struct StockLibraryView: View {
                                 if importingId == item.id {
                                     ProgressView().controlSize(.small).scaleEffect(0.65)
                                 } else {
-                                    PillButton(title: "Import", prominent: false) { importItem(item) }
+                                    HStack(spacing: 4) {
+                                        PillButton(title: "Import", prominent: false) { importItem(item, placeOnV2: false) }
+                                        PillButton(title: "Add V2", prominent: true) { importItem(item, placeOnV2: true) }
+                                    }
                                 }
                             }
                             .padding(8)
@@ -182,7 +186,31 @@ struct StockLibraryView: View {
         }
     }
 
-    private func importItem(_ item: StockSearchItem) {
+    @ViewBuilder
+    private func stockThumbnail(for item: StockSearchItem) -> some View {
+        let placeholder = RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(Theme.bg)
+            .overlay(
+                Image(systemName: item.kind == .photos ? "photo" : "film")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+            )
+        if let previewURL = item.previewURL {
+            AsyncImage(url: previewURL) { phase in
+                if case .success(let image) = phase {
+                    image.resizable().scaledToFill()
+                } else {
+                    placeholder
+                }
+            }
+            .frame(width: 56, height: 36)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        } else {
+            placeholder.frame(width: 56, height: 36)
+        }
+    }
+
+    private func importItem(_ item: StockSearchItem, placeOnV2: Bool) {
         importingId = item.id
         errorMessage = nil
         statusBanner = nil
@@ -191,10 +219,28 @@ struct StockLibraryView: View {
         Task {
             do {
                 let url = try await stock.downloadAndVerify(item, into: folder)
-                model.importFiles([url], offerMatch: false) { _ in }
-                statusBanner = "Imported \(url.lastPathComponent)"
+                if placeOnV2 {
+                    let turnId = "stock-\(UUID().uuidString.prefix(8))"
+                    let at = max(0, model.playhead)
+                    try model.beginAgentTurn(turnId: turnId, summary: "Add B-roll \(item.title)")
+                    do {
+                        _ = try await MCPTools.call("insert_broll_overlay", [
+                            "asset_path": url.path,
+                            "timeline_start": at,
+                            "mute_audio": true,
+                        ], model: model, client: nil, draft: model.activeAgentTurn?.draft, isExternal: false)
+                        _ = try model.commitAgentTurn(turnId: turnId)
+                        statusBanner = String(format: "Added %@ on V2 @ %.1fs", url.lastPathComponent, at)
+                    } catch {
+                        _ = try? model.rollbackAgentTurn(turnId: turnId)
+                        throw error
+                    }
+                } else {
+                    model.importFiles([url], offerMatch: false) { _ in }
+                    statusBanner = "Imported \(url.lastPathComponent)"
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = SecretRedactor.redact(error.localizedDescription)
             }
             importingId = nil
         }

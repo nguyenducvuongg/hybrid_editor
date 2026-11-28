@@ -174,7 +174,6 @@ enum MCPTools {
             return json(BuiltInLook.all.map(\.name) + PluginHost.shared.activeLUTPaths().map(\.path))
 
         case "import_media":
-            try notInMagic()
             let paths = args["paths"] as? [String] ?? []
             let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
             let missing = urls.filter { !FileManager.default.fileExists(atPath: $0.path) }
@@ -182,6 +181,7 @@ enum MCPTools {
             let assets: [MediaAsset] = await withCheckedContinuation { cont in
                 model.importFiles(urls, offerMatch: false) { cont.resume(returning: $0) }
             }
+            for asset in assets { draft?.addAsset(asset) }
             return json(["imported": assets.map(assetJSON), "failed": urls.count - assets.count])
 
         case "download_media":

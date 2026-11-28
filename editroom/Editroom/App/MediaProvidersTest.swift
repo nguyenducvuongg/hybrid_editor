@@ -3,6 +3,18 @@ import Foundation
 import Network
 import SwiftUI
 
+private final class ListenerOnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acquired = false
+    func tryAcquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !acquired else { return false }
+        acquired = true
+        return true
+    }
+}
+
 /// In-process loopback HTTP mock serving ComfyUI REST endpoints plus Pexels & Pixabay search/media files.
 private final class LoopbackMediaMockServer: @unchecked Sendable {
     private var listener: NWListener?
@@ -20,16 +32,15 @@ private final class LoopbackMediaMockServer: @unchecked Sendable {
         let l = try NWListener(using: .tcp, on: .any)
         l.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var resumed = false
+            let gate = ListenerOnceGate()
             l.stateUpdateHandler = { [weak self] st in
-                guard !resumed else { return }
                 switch st {
                 case .ready:
-                    resumed = true
+                    guard gate.tryAcquire() else { return }
                     self?.port = l.port?.rawValue ?? 0
                     cont.resume()
                 case .failed(let err):
-                    resumed = true
+                    guard gate.tryAcquire() else { return }
                     cont.resume(throwing: err)
                 default:
                     break

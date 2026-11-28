@@ -29,6 +29,7 @@ struct SkillsSettingsView: View {
                             }
                             HStack(spacing: 10) {
                                 PillButton(title: "Add Local Folder…", prominent: false) { pickLocalFolder() }
+                                PillButton(title: "Restore Built-in", prominent: false) { restoreBuiltIn() }
                                 if let statusMessage {
                                     Text(statusMessage)
                                         .font(.system(size: 11.5))
@@ -103,6 +104,12 @@ struct SkillsSettingsView: View {
             isError = true
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func restoreBuiltIn() {
+        let added = registry.seedBuiltInSkills(force: true)
+        isError = false
+        statusMessage = "Restored \(added) built-in skills"
     }
 }
 

@@ -81,6 +81,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Updates.shared.start() }
+        let testFlags = ["--hybrid-test", "--extensions-test", "--media-providers-test", "--smart-editing-test", "--hardening-4k-test", "--selftest"]
+        if !testFlags.contains(where: { CommandLine.arguments.contains($0) }) {
+            Task { @MainActor in
+                _ = SkillRegistry.shared.seedBuiltInSkills(force: false)
+            }
+        }
         NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { note in
             // Tidied once SwiftUI has finished updating the menus, never in the middle of it.
             MainActor.assumeIsolated { MenuCleanup.scheduleTidy() }

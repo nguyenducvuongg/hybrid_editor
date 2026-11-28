@@ -2,6 +2,18 @@ import AppKit
 import Foundation
 import Network
 
+private final class SmartOnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acquired = false
+    func tryAcquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !acquired else { return false }
+        acquired = true
+        return true
+    }
+}
+
 /// Loopback OpenAI-compatible mock VLM server for testing `LocalVLMVisionProvider` (`S4`).
 private final class LoopbackVLMMockServer: @unchecked Sendable {
     private var listener: NWListener?
@@ -14,19 +26,15 @@ private final class LoopbackVLMMockServer: @unchecked Sendable {
         let l = try NWListener(using: .tcp, on: .any)
         l.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let stateLock = NSLock()
-            var resumed = false
+            let gate = SmartOnceGate()
             l.stateUpdateHandler = { [weak self] st in
-                stateLock.lock()
-                defer { stateLock.unlock() }
-                guard !resumed else { return }
                 switch st {
                 case .ready:
-                    resumed = true
+                    guard gate.tryAcquire() else { return }
                     self?.port = l.port?.rawValue ?? 0
                     cont.resume()
                 case .failed(let err):
-                    resumed = true
+                    guard gate.tryAcquire() else { return }
                     cont.resume(throwing: err)
                 default:
                     break

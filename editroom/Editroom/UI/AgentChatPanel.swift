@@ -174,11 +174,19 @@ struct AgentChatPanel: View {
                     }
 
                     if chatStore.isRunning {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(chatStore.liveStatus ?? "Working…")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Theme.textDim)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(chatStore.liveStatus ?? "Working…")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            if !chatStore.streamingText.isEmpty {
+                                Text(chatStore.streamingText)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.text)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -304,8 +312,12 @@ struct AgentChatPanel: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
                     .onSubmit { sendPrompt() }
 
-                PillButton(title: "Send", prominent: true) { sendPrompt() }
-                    .disabled(chatStore.isRunning || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if chatStore.isRunning {
+                    PillButton(title: "Stop", prominent: false) { chatStore.cancelActiveTurn() }
+                } else {
+                    PillButton(title: "Send", prominent: true) { sendPrompt() }
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
         }
         .padding(12)
@@ -363,9 +375,9 @@ struct AgentChatPanel: View {
             let url = URL(string: "\(base)/chat/completions") ?? URL(string: "https://api.openai.com/v1/chat/completions")!
             return OpenAICompatibleHTTPProvider(endpointURL: url, defaultModel: providerPrefs.openAIModel, requiresAPIKey: true)
         case .claudeCLI:
-            return CLIProcessAgentProvider(kind: .claudeCLI, cliPathProvider: { AgentConnect.shared.claudeCLI })
+            return CLIProcessAgentProvider(kind: .claudeCLI, cliPathProvider: { await AgentConnect.shared.claudeCLI })
         case .codexCLI:
-            return CLIProcessAgentProvider(kind: .codexCLI, cliPathProvider: { AgentConnect.shared.codexCLI })
+            return CLIProcessAgentProvider(kind: .codexCLI, cliPathProvider: { await AgentConnect.shared.codexCLI })
         case .mock:
             return OpenAICompatibleHTTPProvider.ollama()
         }
@@ -404,8 +416,10 @@ struct AgentChatPanel: View {
                     provider: provider,
                     modelId: modelId
                 )
+            } catch is CancellationError {
+                errorBanner = nil
             } catch {
-                errorBanner = error.localizedDescription
+                errorBanner = SecretRedactor.redact(error.localizedDescription)
             }
         }
     }

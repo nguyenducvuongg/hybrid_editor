@@ -254,3 +254,21 @@
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m6_hard_data .../Editroom --hardening-4k-test /tmp/hybrid_edit_m6_hard_out` (`BypassSandbox: true`) | Bộ 6 test (`H1–H6`): `SecretRedactor` & `.room` zero-leak, Plugin env allowlist & chặn `gemini_api_key` + Git hook guard, SSH `-o`/`-F` & IPv6 `[::1]` MCP Host/Origin, `Antigravity 2.0` + `DELETE /mcp` cleanup, **5 vòng E2E 4K (`3840x2160 @ 30fps`)** + xuất **4K HEVC** + `ffprobe`, ngân sách schema `tools=61` (`39,429 bytes`) | **6/6 PASSED** (`rounds=502 ms`, `export_4k_hevc=2.23 s`, `rss=297.2 MB`, `exit 0`) |
 | `--smart-editing-test` (`S1–S6`) + `--media-providers-test` (`M1–M6`) + `--extensions-test` (`E1–E7`) + `--hybrid-test` (`T1–T7`) (`BypassSandbox: true`) | Hồi quy toàn bộ 4 bộ kiểm thử M1-E → M5-E | **6/6 + 6/6 + 7/7 + 7/7 PASSED** (tổng **32/32 PASSED**) |
 | `graphify update .` | Cập nhật AST Knowledge Graph sau cấu trúc sạch + M6-E | **4,538 nodes, 12,392 edges, 230 communities** |
+
+---
+
+## 12. Phase A (`v1.1`) — Sửa triệt để 10/10 lỗi Core Audit (`2026-11-28`)
+
+### Các sửa lỗi & cải tiến cốt lõi (`specs/008-v11-core-audit-fixes/`)
+- **`P0-1` (`ChatSessionStore.inAppTools` + `import_media` draft support):** Loại `hybridLifecycleTools` khỏi bộ tool gửi cho AI Chat in-app để tránh trùng `AgentTurn`/`SessionLease`, đồng thời gỡ rào `notInMagic()` ở `import_media` ([MCPTools.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/MCPTools.swift)) kèm `draft?.addAsset(asset)`.
+- **`P0-2`, `P0-3`, `P1-3` (Multimodal Chat, Gemini Sanitizer & Safe JSON Errors):** [AgentProvider.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Agent/AgentProvider.swift) tách ảnh tool qua `AgentToolFormatting.parse` để chuyển `image_url` data URI (OpenAI-compatible) và `inlineData` (Gemini), thêm `GeminiHTTPProvider.sanitizeGeminiSchema`, thay string interpolation lỗi thành `AgentToolFormatting.jsonError` (có `SecretRedactor`), kiểm tra `Task.checkCancellation()`, và bổ sung lịch sử hội thoại + `MCPServer.endpoint` cho `CLIProcessAgentProvider`.
+- **`P1-1` (Streaming, Stop/Cancel & Redaction):** [ChatSessionStore.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Agent/ChatSessionStore.swift) & [AgentChatPanel.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/AgentChatPanel.swift) thêm `streamingText`, nút **Stop** (`cancelActiveTurn()` rollback sạch turn/lease đang dở), và che lỗi qua `SecretRedactor.redact`.
+- **`P1-2`, `P1-4`, `P1-5` (ComfyUI & Stock UI):** [ComfyUIClient.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/ComfyUI/ComfyUIClient.swift) tự nạp checkpoint thật từ `/object_info/CheckpointLoaderSimple`; [StockMediaClient.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/Stock/StockMediaClient.swift) loại bỏ force-cast `as!`; [StockLibraryView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/StockLibraryView.swift) bổ sung thumbnail `AsyncImage` và nút **Add V2** 1-click.
+- **`P2-1`, `P2-2` (Built-in Skills Auto-Seeding & Swift 6 Concurrency):** [SkillRegistry.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/SkillRegistry.swift) & [ExtensionsSettingsView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/ExtensionsSettingsView.swift) tự nạp 4 built-in skills khi khởi động + nút `"Restore Built-in"`; xử lý cảnh báo Swift 6 trong `ChatSessionStore.swift`, `Meters.swift`, `AgentChatPanel.swift`, `MediaProvidersTest.swift`, `SmartEditingTest.swift`.
+
+### Kiểm chứng thực nghiệm sau lần sửa cuối (`M4 Pro`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `--hardening-4k-test` | `H1–H6` + **`V1–V5`** (in-app tool filter & `import_media` draft, OpenAI/Gemini multimodal loopback & sanitizer, cancel rollback, ComfyUI checkpoint auto-bind, 4 built-in skills + Stock UI) | **11/11 PASSED** (`rounds=497 ms`, `export_4k_hevc=2.23 s`, `rss=212.8 MB`) |
+| `--smart-editing-test` + `--media-providers-test` + `--extensions-test` + `--hybrid-test` | Hồi quy toàn bộ M1-E → M5-E | **6/6 + 6/6 + 7/7 + 7/7 PASSED** (tổng **37/37 PASSED**) |
+| `graphify update .` | Cập nhật AST Knowledge Graph cho `v1.1` | **4,576 nodes, 12,530 edges, 218 communities** |

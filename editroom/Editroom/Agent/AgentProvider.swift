@@ -130,13 +130,50 @@ protocol AgentProvider: Sendable {
     ) async throws -> String
 }
 
+struct ToolImageAttachment: Equatable, Sendable {
+    var mimeType: String
+    var base64Data: String
+}
+
+struct FormattedToolOutput: Equatable, Sendable {
+    var text: String
+    var images: [ToolImageAttachment]
+}
+
 enum AgentToolFormatting {
+    static func parse(from content: [[String: Any]]) -> FormattedToolOutput {
+        let texts = content.compactMap { part -> String? in
+            guard (part["type"] as? String) != "image" else { return nil }
+            return part["text"] as? String
+        }
+        let images = content.compactMap { part -> ToolImageAttachment? in
+            guard (part["type"] as? String) == "image",
+                  let data = part["data"] as? String, !data.isEmpty else { return nil }
+            let mime = (part["mimeType"] as? String) ?? "image/jpeg"
+            return ToolImageAttachment(mimeType: mime, base64Data: data)
+        }
+        let text: String
+        if !texts.isEmpty {
+            text = texts.joined(separator: "\n")
+        } else if !images.isEmpty {
+            text = "{\"image_count\": \(images.count)}"
+        } else {
+            text = "{}"
+        }
+        return FormattedToolOutput(text: text, images: images)
+    }
+
     static func stringOutput(from content: [[String: Any]]) -> String {
-        let texts = content.compactMap { $0["text"] as? String }
-        if !texts.isEmpty { return texts.joined(separator: "\n") }
-        let imageCount = content.filter { ($0["type"] as? String) == "image" }.count
-        if imageCount > 0 { return "{\"image_count\": \(imageCount)}" }
-        return "{}"
+        parse(from: content).text
+    }
+
+    static func jsonError(_ message: String) -> String {
+        let payload = ["error": SecretRedactor.redact(message)]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let str = String(data: data, encoding: .utf8) else {
+            return "{\"error\":\"Tool execution failed\"}"
+        }
+        return str
     }
 }
 
@@ -218,6 +255,7 @@ final class OpenAICompatibleHTTPProvider: AgentProvider, @unchecked Sendable {
         messages.append(["role": "user", "content": request.userPrompt])
 
         for _ in 0..<12 {
+            try Task.checkCancellation()
             onEvent(.status("Thinking (\(displayName))…"))
             var body: [String: Any] = [
                 "model": modelName,
@@ -237,9 +275,11 @@ final class OpenAICompatibleHTTPProvider: AgentProvider, @unchecked Sendable {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
             let (data, resp) = try await URLSession.shared.data(for: req)
+            try Task.checkCancellation()
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(code) else {
-                throw AgentProviderError.httpError(code, String(data: data, encoding: .utf8) ?? "")
+                let rawBody = String(data: data, encoding: .utf8) ?? ""
+                throw AgentProviderError.httpError(code, SecretRedactor.redact(rawBody))
             }
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = root["choices"] as? [[String: Any]],
@@ -255,7 +295,9 @@ final class OpenAICompatibleHTTPProvider: AgentProvider, @unchecked Sendable {
             }
 
             messages.append(message)
+            var stepImages: [ToolImageAttachment] = []
             for tc in toolCalls {
+                try Task.checkCancellation()
                 let callId = (tc["id"] as? String) ?? UUID().uuidString
                 let fn = (tc["function"] as? [String: Any]) ?? [:]
                 let toolName = (fn["name"] as? String) ?? ""
@@ -265,20 +307,34 @@ final class OpenAICompatibleHTTPProvider: AgentProvider, @unchecked Sendable {
                 onEvent(.toolStarted(toolName))
                 do {
                     let result = try await toolExecutor(toolName, parsedArgs)
+                    let parsed = AgentToolFormatting.parse(from: result)
+                    stepImages.append(contentsOf: parsed.images)
                     onEvent(.toolFinished(toolName, true))
                     messages.append([
                         "role": "tool",
                         "tool_call_id": callId,
-                        "content": AgentToolFormatting.stringOutput(from: result),
+                        "content": parsed.text,
                     ])
                 } catch {
                     onEvent(.toolFinished(toolName, false))
                     messages.append([
                         "role": "tool",
                         "tool_call_id": callId,
-                        "content": "{\"error\": \"\(error.localizedDescription)\"}",
+                        "content": AgentToolFormatting.jsonError(error.localizedDescription),
                     ])
                 }
+            }
+            if !stepImages.isEmpty {
+                var blocks: [[String: Any]] = [
+                    ["type": "text", "text": "Attached visual frames from the previous tool responses:"]
+                ]
+                for img in stepImages {
+                    blocks.append([
+                        "type": "image_url",
+                        "image_url": ["url": "data:\(img.mimeType);base64,\(img.base64Data)"],
+                    ])
+                }
+                messages.append(["role": "user", "content": blocks])
             }
         }
         throw AgentProviderError.toolLoopExceeded
@@ -301,6 +357,58 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
         self.apiKeyLookup = apiKeyLookup
     }
 
+    /// Filters MCP JSON Schemas down to the subset accepted by Gemini `:generateContent` `Schema` objects.
+    static func sanitizeGeminiSchema(_ raw: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        if let typeStr = raw["type"] as? String {
+            out["type"] = typeStr.lowercased()
+        } else if let types = raw["type"] as? [String] {
+            let nonNull = types.map { $0.lowercased() }.filter { $0 != "null" }
+            out["type"] = nonNull.first ?? "string"
+            if types.contains(where: { $0.lowercased() == "null" }) {
+                out["nullable"] = true
+            }
+        }
+        if let desc = raw["description"] as? String, !desc.isEmpty {
+            out["description"] = desc
+        }
+        if let enums = raw["enum"] as? [String], !enums.isEmpty {
+            out["enum"] = enums
+        }
+        if let fmt = raw["format"] as? String, !fmt.isEmpty {
+            out["format"] = fmt
+        }
+        if let nullable = raw["nullable"] as? Bool {
+            out["nullable"] = nullable
+        }
+        if let items = raw["items"] as? [String: Any] {
+            var sanitizedItems = sanitizeGeminiSchema(items)
+            if sanitizedItems["type"] == nil { sanitizedItems["type"] = "string" }
+            out["items"] = sanitizedItems
+        }
+        if let props = raw["properties"] as? [String: Any] {
+            var cleanProps: [String: Any] = [:]
+            for (k, v) in props {
+                if let sub = v as? [String: Any] {
+                    cleanProps[k] = sanitizeGeminiSchema(sub)
+                }
+            }
+            if !cleanProps.isEmpty {
+                out["properties"] = cleanProps
+            }
+        }
+        if let req = raw["required"] as? [String], !req.isEmpty {
+            if let props = out["properties"] as? [String: Any] {
+                let validReq = req.filter { props[$0] != nil }
+                if !validReq.isEmpty { out["required"] = validReq }
+            }
+        }
+        if out["type"] == nil {
+            out["type"] = (out["properties"] != nil) ? "object" : "string"
+        }
+        return out
+    }
+
     func runTurn(
         _ request: AgentRequest,
         toolExecutor: @escaping @Sendable (String, [String: Any]) async throws -> [[String: Any]],
@@ -317,10 +425,11 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
 
         let decls: [[String: Any]] = request.tools.compactMap { def in
             guard let name = def["name"] as? String else { return nil }
+            let rawSchema = (def["inputSchema"] as? [String: Any]) ?? ["type": "object"]
             return [
                 "name": name,
                 "description": (def["description"] as? String) ?? "",
-                "parameters": (def["inputSchema"] as? [String: Any]) ?? ["type": "object", "properties": [:]],
+                "parameters": Self.sanitizeGeminiSchema(rawSchema),
             ]
         }
 
@@ -332,6 +441,7 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
         contents.append(["role": "user", "parts": [["text": request.userPrompt]]])
 
         for _ in 0..<12 {
+            try Task.checkCancellation()
             onEvent(.status("Thinking (Gemini)…"))
             var body: [String: Any] = ["contents": contents]
             if !request.systemPrompt.isEmpty {
@@ -349,9 +459,11 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
             let (data, resp) = try await URLSession.shared.data(for: req)
+            try Task.checkCancellation()
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(code) else {
-                throw AgentProviderError.httpError(code, String(data: data, encoding: .utf8) ?? "")
+                let rawBody = String(data: data, encoding: .utf8) ?? ""
+                throw AgentProviderError.httpError(code, SecretRedactor.redact(rawBody))
             }
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let candidates = root["candidates"] as? [[String: Any]],
@@ -369,17 +481,21 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
             }
 
             var responseParts: [[String: Any]] = []
+            var stepImages: [ToolImageAttachment] = []
             for call in calls {
+                try Task.checkCancellation()
                 let toolName = (call["name"] as? String) ?? ""
                 let args = (call["args"] as? [String: Any]) ?? [:]
                 onEvent(.toolStarted(toolName))
                 do {
                     let result = try await toolExecutor(toolName, args)
+                    let parsed = AgentToolFormatting.parse(from: result)
+                    stepImages.append(contentsOf: parsed.images)
                     onEvent(.toolFinished(toolName, true))
                     responseParts.append([
                         "functionResponse": [
                             "name": toolName,
-                            "response": ["result": AgentToolFormatting.stringOutput(from: result)],
+                            "response": ["result": parsed.text],
                         ],
                     ])
                 } catch {
@@ -387,10 +503,18 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
                     responseParts.append([
                         "functionResponse": [
                             "name": toolName,
-                            "response": ["error": error.localizedDescription],
+                            "response": ["error": SecretRedactor.redact(error.localizedDescription)],
                         ],
                     ])
                 }
+            }
+            for img in stepImages {
+                responseParts.append([
+                    "inlineData": [
+                        "mimeType": img.mimeType,
+                        "data": img.base64Data,
+                    ],
+                ])
             }
             contents.append(["role": "user", "parts": responseParts])
         }
@@ -422,7 +546,18 @@ final class CLIProcessAgentProvider: AgentProvider, @unchecked Sendable {
         }
         onEvent(.status("Running \(displayName)…"))
 
-        let promptPayload = [request.systemPrompt, request.userPrompt]
+        let historyBlock = request.thread.messages.suffix(8).compactMap { msg -> String? in
+            guard msg.role == .user || msg.role == .assistant else { return nil }
+            let who = msg.role == .assistant ? "Assistant" : "User"
+            return "\(who): \(msg.text)"
+        }.joined(separator: "\n")
+        let mcpNote = "Editroom MCP HTTP endpoint: \(MCPServer.endpoint)"
+        let promptPayload = [
+            request.systemPrompt,
+            mcpNote,
+            historyBlock.isEmpty ? "" : "Recent conversation:\n\(historyBlock)",
+            "User: \(request.userPrompt)",
+        ]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
         let args = kind == .claudeCLI

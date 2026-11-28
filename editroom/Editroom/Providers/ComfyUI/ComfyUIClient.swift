@@ -124,7 +124,7 @@ final class ComfyUIClient: @unchecked Sendable {
                         "latent_image": ["5", 0],
                     ],
                 ],
-                "4": ["class_type": "CheckpointLoaderSimple", "inputs": ["ckpt_name": "model.safetensors"]],
+                "4": ["class_type": "CheckpointLoaderSimple", "inputs": ["ckpt_name": "{{checkpoint}}"]],
                 "5": ["class_type": "EmptyLatentImage", "inputs": ["width": "{{width}}", "height": "{{height}}", "batch_size": 1]],
                 "6": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{prompt}}", "clip": ["4", 1]]],
                 "7": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{negative_prompt}}", "clip": ["4", 1]]],
@@ -356,6 +356,13 @@ final class ComfyUIClient: @unchecked Sendable {
 
         let pluginWorkflows = await MainActor.run { PluginHost.shared.activeComfyWorkflowPaths() }
         let (wfName, rawGraph) = try resolveWorkflowTemplate(request: request, pluginWorkflows: pluginWorkflows)
+        var resolvedCheckpoint = "model.safetensors"
+        if wfName.hasPrefix("built-in:") || String(describing: rawGraph).contains("{{checkpoint}}") {
+            let ckpts = await fetchCheckpoints(baseURL: baseURL, secrets: secrets)
+            if let firstCkpt = ckpts.first, !firstCkpt.isEmpty {
+                resolvedCheckpoint = firstCkpt
+            }
+        }
         let values: [String: Any] = [
             "{{prompt}}": request.prompt,
             "{{negative_prompt}}": request.negativePrompt,
@@ -364,6 +371,7 @@ final class ComfyUIClient: @unchecked Sendable {
             "{{height}}": request.height,
             "{{frames}}": request.frames,
             "{{input_image}}": uploadedImageName,
+            "{{checkpoint}}": resolvedCheckpoint,
         ]
         guard let boundGraph = Self.substitutePlaceholders(in: rawGraph, values: values) as? [String: Any] else {
             throw ComfyError.invalidWorkflow("Failed to bind ComfyUI workflow parameters.")

@@ -26,11 +26,26 @@ final class ChatSessionStore: ObservableObject {
     @Published private(set) var threads: [ChatThread] = []
     @Published private(set) var isRunning = false
     @Published private(set) var liveStatus: String?
+    @Published private(set) var streamingText: String = ""
+    private var activeTurnTask: Task<String, Error>?
 
-    init(baseDir: URL? = nil, skillRegistry: SkillRegistry = .shared, pluginHost: PluginHost = .shared) {
+    init(baseDir: URL? = nil, skillRegistry: SkillRegistry? = nil, pluginHost: PluginHost? = nil) {
         self.baseDir = baseDir ?? HybridStorage.subdir("Chats")
-        self.skillRegistry = skillRegistry
-        self.pluginHost = pluginHost
+        self.skillRegistry = skillRegistry ?? .shared
+        self.pluginHost = pluginHost ?? .shared
+    }
+
+    /// Returns MCP tools safe for in-app chat (hiding manual session/turn lifecycle tools already owned by `ChatSessionStore`).
+    static func inAppTools(pluginTools: [[String: Any]] = []) -> [[String: Any]] {
+        let filtered = MCPTools.definitions.filter { def in
+            guard let name = def["name"] as? String else { return false }
+            return !MCPTools.hybridLifecycleTools.contains(name)
+        }
+        return filtered + pluginTools
+    }
+
+    func cancelActiveTurn() {
+        activeTurnTask?.cancel()
     }
 
     private func fileURL(for projectKey: String) -> URL {
@@ -98,10 +113,13 @@ final class ChatSessionStore: ObservableObject {
         }
 
         isRunning = true
+        streamingText = ""
         liveStatus = "Preparing turn…"
         defer {
             isRunning = false
             liveStatus = nil
+            streamingText = ""
+            activeTurnTask = nil
         }
 
         let detectedSlugs = SkillRegistry.extractSlashSlugs(from: prompt)
@@ -113,7 +131,7 @@ final class ChatSessionStore: ObservableObject {
         let skillPrompt = skillRegistry.composePromptSection(explicitSlugs: allSlugs)
         let baseSystem = """
         You are Editroom's editing assistant working inside a live project timeline.
-        Always inspect with get_project / list_media before mutating. Keep explanations concise.
+        An AgentTurn is already open for this message; edit directly and always inspect with get_project / list_media before mutating. Keep explanations concise.
         """
         let fullSystemPrompt = skillPrompt.isEmpty ? baseSystem : "\(baseSystem)\n\n\(skillPrompt)"
 
@@ -137,13 +155,14 @@ final class ChatSessionStore: ObservableObject {
             try? model.leaseManager.release(sessionId: sessionId)
         }
 
-        // Gather standard MCP tools + enabled & trusted Tier A plugin tools.
-        var tools = MCPTools.definitions
+        // Gather standard editing MCP tools + enabled & trusted Tier A plugin tools.
+        var pluginTools: [[String: Any]] = []
         for plugin in pluginHost.plugins where plugin.enabled && plugin.trustedForExecution && plugin.manifest.mcp != nil {
             if let pTools = try? await pluginHost.listPluginTools(id: plugin.id) {
-                tools.append(contentsOf: pTools)
+                pluginTools.append(contentsOf: pTools)
             }
         }
+        let tools = Self.inAppTools(pluginTools: pluginTools)
 
         var recordedEvents: [ChatToolEvent] = []
         let requestSnapshot = AgentRequest(
@@ -154,46 +173,54 @@ final class ChatSessionStore: ObservableObject {
             modelId: modelId.isEmpty ? currentThread.modelId : modelId
         )
 
-        let replyText = try await provider.runTurn(
-            requestSnapshot,
-            toolExecutor: { [weak self, weak model] toolName, args in
-                guard let self, let model else {
-                    throw MCPToolError("Editor session is no longer active.")
-                }
-                if toolName.hasPrefix("plugin.") {
-                    let res = try await self.pluginHost.callNamespacedTool(toolName, arguments: args)
-                    recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "plugin", succeeded: true))
-                    return res
-                }
-                do {
-                    let out = try await MCPTools.call(
-                        toolName,
-                        args,
-                        model: model,
-                        client: nil,
-                        draft: model.activeAgentTurn?.draft,
-                        sessionId: sessionId,
-                        isExternal: true
-                    )
-                    recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "ok", succeeded: true))
-                    return out
-                } catch {
-                    recordedEvents.append(ChatToolEvent(toolName: toolName, summary: error.localizedDescription, succeeded: false))
-                    throw error
-                }
-            },
-            onEvent: { [weak self] ev in
-                Task { @MainActor in
-                    switch ev {
-                    case .status(let msg): self?.liveStatus = msg
-                    case .toolStarted(let name): self?.liveStatus = "Running \(name)…"
-                    case .toolFinished(let name, let ok): self?.liveStatus = ok ? "Done \(name)" : "Failed \(name)"
-                    case .textDelta: break
+        let turnTask = Task {
+            try await provider.runTurn(
+                requestSnapshot,
+                toolExecutor: { [weak self, weak model] toolName, args in
+                    guard let self, let model else {
+                        throw MCPToolError("Editor session is no longer active.")
                     }
-                    onEvent?(ev)
+                    if toolName.hasPrefix("plugin.") {
+                        let res = try await self.pluginHost.callNamespacedTool(toolName, arguments: args)
+                        recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "plugin", succeeded: true))
+                        return res
+                    }
+                    do {
+                        let out = try await MCPTools.call(
+                            toolName,
+                            args,
+                            model: model,
+                            client: nil,
+                            draft: model.activeAgentTurn?.draft,
+                            sessionId: sessionId,
+                            isExternal: true
+                        )
+                        recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "ok", succeeded: true))
+                        return out
+                    } catch {
+                        recordedEvents.append(ChatToolEvent(
+                            toolName: toolName,
+                            summary: SecretRedactor.redact(error.localizedDescription),
+                            succeeded: false
+                        ))
+                        throw error
+                    }
+                },
+                onEvent: { [weak self] ev in
+                    Task { @MainActor in
+                        switch ev {
+                        case .status(let msg): self?.liveStatus = msg
+                        case .toolStarted(let name): self?.liveStatus = "Running \(name)…"
+                        case .toolFinished(let name, let ok): self?.liveStatus = ok ? "Done \(name)" : "Failed \(name)"
+                        case .textDelta(let delta): self?.streamingText += delta
+                        }
+                        onEvent?(ev)
+                    }
                 }
-            }
-        )
+            )
+        }
+        activeTurnTask = turnTask
+        let replyText = try await turnTask.value
 
         let commit = try model.commitAgentTurn(turnId: turnId)
         turnCommitted = true
