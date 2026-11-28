@@ -6,6 +6,7 @@ struct AgentChatPanel: View {
     @ObservedObject private var chatStore = ChatSessionStore.shared
     @ObservedObject private var skills = SkillRegistry.shared
     @ObservedObject private var themes = ThemeStore.shared
+    @ObservedObject private var comfyProgress = ComfyProgressMonitor.shared
     @Environment(\.openSettings) private var openSettings
 
     @State private var selectedThreadId: UUID?
@@ -32,6 +33,7 @@ struct AgentChatPanel: View {
             skillsBar
             Divider().overlay(Theme.stroke)
             messagesArea
+            if comfyProgress.state.isRunning { comfyProgressStrip }
             if let errorBanner { errorStrip(errorBanner) }
             Divider().overlay(Theme.stroke)
             composerArea
@@ -267,6 +269,30 @@ struct AgentChatPanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isUser ? Theme.raised : Theme.field))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.stroke))
+    }
+
+    private var comfyProgressStrip: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.6)
+                Text(comfyProgress.state.workflowName)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text(comfyProgress.state.phase)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
+            }
+            if comfyProgress.state.maxSteps > 0 {
+                ProgressView(value: comfyProgress.state.fraction)
+                    .progressViewStyle(.linear)
+                    .tint(Theme.accent)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Theme.raised)
     }
 
     private func errorStrip(_ message: String) -> some View {

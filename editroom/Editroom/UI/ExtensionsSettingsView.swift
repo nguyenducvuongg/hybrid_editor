@@ -384,6 +384,7 @@ struct IntegrationsSettingsView: View {
     @State private var savedBanner: String?
     @State private var testingComfy = false
     @State private var comfyTestResult: (ok: Bool, text: String)?
+    @State private var galleryBanner: String?
 
     var body: some View {
         ScrollView {
@@ -513,6 +514,35 @@ struct IntegrationsSettingsView: View {
                                         PillButton(title: "Test Connection", prominent: false) { testComfy() }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    SettingsSection("ComfyUI Workflow Gallery") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(ComfyUIClient.galleryPresets.enumerated()), id: \.element.id) { idx, preset in
+                                if idx > 0 { Divider().overlay(Theme.stroke) }
+                                SettingsRow(preset.name, detail: "\(preset.badge) · \(preset.recommendedVRAMGB)GB VRAM · \(preset.description)") {
+                                    PillButton(title: "Save JSON", prominent: false) {
+                                        do {
+                                            let url = try ComfyUIClient.shared.exportGalleryPreset(id: preset.id)
+                                            galleryBanner = "Saved \(url.lastPathComponent) to ComfyWorkflows/"
+                                        } catch {
+                                            galleryBanner = SecretRedactor.redact(error.localizedDescription)
+                                        }
+                                    }
+                                }
+                            }
+                            if let galleryBanner {
+                                Divider().overlay(Theme.stroke)
+                                HStack {
+                                    Text(galleryBanner)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color(hex: 0x39B54A))
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
                             }
                         }
                     }

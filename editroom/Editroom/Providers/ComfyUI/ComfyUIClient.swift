@@ -6,6 +6,95 @@ enum ComfyMediaKind: String, Codable, CaseIterable, Sendable {
     case audio
 }
 
+/// Curated workflow gallery entry exposed to Settings UI, Agent Chat, and `comfy_status`.
+struct ComfyWorkflowPreset: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var name: String
+    var kind: ComfyMediaKind
+    var badge: String
+    var description: String
+    var defaultWidth: Int
+    var defaultHeight: Int
+    var defaultFrames: Int
+    var defaultSteps: Int
+    var recommendedVRAMGB: Int
+}
+
+/// Structured event decoded from ComfyUI `/ws?clientId=...` messages.
+enum ComfyWSEvent: Equatable, Sendable {
+    case executionStart(promptId: String?)
+    case executing(node: String?)
+    case progress(value: Int, max: Int, node: String?)
+    case executionError(message: String)
+}
+
+/// Live ComfyUI generation progress snapshot observed by `AgentChatPanel`.
+struct ComfyProgressState: Equatable, Sendable {
+    var isRunning: Bool = false
+    var promptId: String? = nil
+    var workflowName: String = ""
+    var phase: String = "Idle"
+    var step: Int = 0
+    var maxSteps: Int = 0
+    var nodeName: String? = nil
+
+    var fraction: Double {
+        guard maxSteps > 0 else { return 0 }
+        return min(1.0, max(0.0, Double(step) / Double(maxSteps)))
+    }
+}
+
+/// Observable realtime WebSocket progress hub for active ComfyUI generations (`I6`).
+@MainActor
+final class ComfyProgressMonitor: ObservableObject {
+    static let shared = ComfyProgressMonitor()
+    @Published private(set) var state = ComfyProgressState()
+
+    func begin(workflowName: String) {
+        state = ComfyProgressState(isRunning: true, promptId: nil, workflowName: workflowName, phase: "Submitting prompt…", step: 0, maxSteps: 0, nodeName: nil)
+    }
+
+    func update(phase: String, promptId: String? = nil, step: Int? = nil, maxSteps: Int? = nil, nodeName: String? = nil) {
+        var next = state
+        next.isRunning = true
+        next.phase = phase
+        if let promptId { next.promptId = promptId }
+        if let step { next.step = step }
+        if let maxSteps { next.maxSteps = maxSteps }
+        if let nodeName { next.nodeName = nodeName }
+        state = next
+    }
+
+    func apply(event: ComfyWSEvent) {
+        var next = state
+        next.isRunning = true
+        switch event {
+        case .executionStart(let pid):
+            next.phase = "Executing workflow…"
+            if let pid { next.promptId = pid }
+        case .executing(let node):
+            next.nodeName = node
+            if let node, !node.isEmpty {
+                next.phase = "Running node \(node)…"
+            } else {
+                next.phase = "Finalizing output…"
+            }
+        case .progress(let val, let maxVal, let node):
+            next.step = max(0, val)
+            next.maxSteps = max(0, maxVal)
+            next.nodeName = node ?? next.nodeName
+            next.phase = maxVal > 0 ? "Denoising step \(val)/\(maxVal)" : "Processing…"
+        case .executionError(let msg):
+            next.phase = "Error: \(msg)"
+        }
+        state = next
+    }
+
+    func finish() {
+        state = ComfyProgressState()
+    }
+}
+
 struct ComfySystemStatus: Codable, Equatable, Sendable {
     var endpoint: String
     var mode: String
@@ -15,6 +104,7 @@ struct ComfySystemStatus: Codable, Equatable, Sendable {
     var vramFreeMB: Int?
     var availableWorkflows: [String]
     var checkpoints: [String]
+    var galleryPresets: [ComfyWorkflowPreset] = ComfyUIClient.galleryPresets
     var errorMessage: String?
 }
 
@@ -27,6 +117,7 @@ struct ComfyGenerationRequest: @unchecked Sendable {
     var width: Int
     var height: Int
     var frames: Int
+    var steps: Int?
     var seed: Int
     var referenceImagePNG: Data?
     var referenceFilename: String?
@@ -40,6 +131,7 @@ struct ComfyGenerationRequest: @unchecked Sendable {
         width: Int = 1024,
         height: Int = 576,
         frames: Int = 25,
+        steps: Int? = nil,
         seed: Int = Int.random(in: 1...Int(Int32.max)),
         referenceImagePNG: Data? = nil,
         referenceFilename: String? = nil
@@ -52,6 +144,7 @@ struct ComfyGenerationRequest: @unchecked Sendable {
         self.width = width
         self.height = height
         self.frames = frames
+        self.steps = steps
         self.seed = seed
         self.referenceImagePNG = referenceImagePNG
         self.referenceFilename = referenceFilename
@@ -103,6 +196,185 @@ final class ComfyUIClient: @unchecked Sendable {
         }
         rows.append(contentsOf: pluginWorkflows)
         return rows
+    }
+
+    static let galleryPresets: [ComfyWorkflowPreset] = [
+        ComfyWorkflowPreset(
+            id: "flux_schnell",
+            name: "Flux.1 Schnell",
+            kind: .image,
+            badge: "4 Steps · Fast",
+            description: "High-speed B-roll stills via FLUX.1-schnell (Euler/Simple 4 steps, CFG 1.0).",
+            defaultWidth: 1024,
+            defaultHeight: 1024,
+            defaultFrames: 1,
+            defaultSteps: 4,
+            recommendedVRAMGB: 8
+        ),
+        ComfyWorkflowPreset(
+            id: "flux_dev",
+            name: "Flux.1 Dev",
+            kind: .image,
+            badge: "24 Steps · Quality",
+            description: "Studio stills with fine Vietnamese cultural/product detail via FLUX.1-dev.",
+            defaultWidth: 1024,
+            defaultHeight: 1024,
+            defaultFrames: 1,
+            defaultSteps: 24,
+            recommendedVRAMGB: 12
+        ),
+        ComfyWorkflowPreset(
+            id: "wan21_i2v",
+            name: "Wan2.1 I2V",
+            kind: .video,
+            badge: "Video I2V · 49f",
+            description: "Image-to-Video animation from captured timeline frame or key visual.",
+            defaultWidth: 832,
+            defaultHeight: 480,
+            defaultFrames: 49,
+            defaultSteps: 20,
+            recommendedVRAMGB: 16
+        ),
+        ComfyWorkflowPreset(
+            id: "stable_audio_sfx",
+            name: "Stable Audio / SFX",
+            kind: .audio,
+            badge: "Audio · SFX/BGM",
+            description: "Procedural ambient sound effects and short stingers synchronized to cuts.",
+            defaultWidth: 512,
+            defaultHeight: 512,
+            defaultFrames: 1,
+            defaultSteps: 50,
+            recommendedVRAMGB: 8
+        ),
+    ]
+
+    static func galleryTemplate(id rawID: String) -> [String: Any]? {
+        let key = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "gallery:", with: "")
+            .lowercased()
+        switch key {
+        case "flux_schnell":
+            return [
+                "3": [
+                    "class_type": "KSampler",
+                    "inputs": [
+                        "seed": "{{seed}}",
+                        "steps": "{{steps}}",
+                        "cfg": 1.0,
+                        "sampler_name": "euler",
+                        "scheduler": "simple",
+                        "denoise": 1.0,
+                        "model": ["4", 0],
+                        "positive": ["6", 0],
+                        "negative": ["7", 0],
+                        "latent_image": ["5", 0],
+                    ],
+                ],
+                "4": ["class_type": "CheckpointLoaderSimple", "inputs": ["ckpt_name": "{{checkpoint}}"]],
+                "5": ["class_type": "EmptySD3LatentImage", "inputs": ["width": "{{width}}", "height": "{{height}}", "batch_size": 1]],
+                "6": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{prompt}}", "clip": ["4", 1]]],
+                "7": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{negative_prompt}}", "clip": ["4", 1]]],
+                "8": ["class_type": "VAEDecode", "inputs": ["samples": ["3", 0], "vae": ["4", 2]]],
+                "9": ["class_type": "SaveImage", "inputs": ["filename_prefix": "editroom_flux_schnell", "images": ["8", 0]]],
+            ]
+        case "flux_dev":
+            return [
+                "3": [
+                    "class_type": "KSampler",
+                    "inputs": [
+                        "seed": "{{seed}}",
+                        "steps": "{{steps}}",
+                        "cfg": 3.5,
+                        "sampler_name": "euler",
+                        "scheduler": "beta",
+                        "denoise": 1.0,
+                        "model": ["4", 0],
+                        "positive": ["6", 0],
+                        "negative": ["7", 0],
+                        "latent_image": ["5", 0],
+                    ],
+                ],
+                "4": ["class_type": "CheckpointLoaderSimple", "inputs": ["ckpt_name": "{{checkpoint}}"]],
+                "5": ["class_type": "EmptySD3LatentImage", "inputs": ["width": "{{width}}", "height": "{{height}}", "batch_size": 1]],
+                "6": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{prompt}}", "clip": ["4", 1]]],
+                "7": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{negative_prompt}}", "clip": ["4", 1]]],
+                "8": ["class_type": "VAEDecode", "inputs": ["samples": ["3", 0], "vae": ["4", 2]]],
+                "9": ["class_type": "SaveImage", "inputs": ["filename_prefix": "editroom_flux_dev", "images": ["8", 0]]],
+            ]
+        case "wan21_i2v":
+            return [
+                "1": ["class_type": "LoadImage", "inputs": ["image": "{{input_image}}"]],
+                "2": ["class_type": "CheckpointLoaderSimple", "inputs": ["ckpt_name": "{{checkpoint}}"]],
+                "3": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{prompt}}", "clip": ["2", 1]]],
+                "4": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{negative_prompt}}", "clip": ["2", 1]]],
+                "5": [
+                    "class_type": "WanImageToVideo",
+                    "inputs": [
+                        "width": "{{width}}",
+                        "height": "{{height}}",
+                        "length": "{{frames}}",
+                        "batch_size": 1,
+                        "positive": ["3", 0],
+                        "negative": ["4", 0],
+                        "start_image": ["1", 0],
+                    ],
+                ],
+                "6": [
+                    "class_type": "KSampler",
+                    "inputs": [
+                        "seed": "{{seed}}",
+                        "steps": "{{steps}}",
+                        "cfg": 6.0,
+                        "sampler_name": "uni_pc",
+                        "scheduler": "simple",
+                        "denoise": 1.0,
+                        "model": ["2", 0],
+                        "positive": ["5", 0],
+                        "negative": ["5", 1],
+                        "latent_image": ["5", 2],
+                    ],
+                ],
+                "7": ["class_type": "VAEDecode", "inputs": ["samples": ["6", 0], "vae": ["2", 2]]],
+                "8": ["class_type": "SaveWEBM", "inputs": ["filename_prefix": "editroom_wan21_i2v", "images": ["7", 0], "fps": 16]],
+            ]
+        case "stable_audio_sfx":
+            return [
+                "1": ["class_type": "EmptyLatentAudio", "inputs": ["seconds": 8.0, "batch_size": 1]],
+                "2": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{prompt}}"]],
+                "3": ["class_type": "CLIPTextEncode", "inputs": ["text": "{{negative_prompt}}"]],
+                "4": [
+                    "class_type": "KSampler",
+                    "inputs": [
+                        "seed": "{{seed}}",
+                        "steps": "{{steps}}",
+                        "cfg": 7.0,
+                        "sampler_name": "dpmpp_3m_sde",
+                        "scheduler": "exponential",
+                        "denoise": 1.0,
+                        "positive": ["2", 0],
+                        "negative": ["3", 0],
+                        "latent_image": ["1", 0],
+                    ],
+                ],
+                "5": ["class_type": "SaveAudio", "inputs": ["filename_prefix": "editroom_sfx", "audio": ["4", 0]]],
+            ]
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    func exportGalleryPreset(id: String) throws -> URL {
+        guard let template = Self.galleryTemplate(id: id) else {
+            throw ComfyError.invalidWorkflow("Unknown ComfyUI gallery preset '\(id)'.")
+        }
+        try FileManager.default.createDirectory(at: workflowsDir, withIntermediateDirectories: true)
+        let slug = id.replacingOccurrences(of: "gallery:", with: "").lowercased()
+        let dest = workflowsDir.appendingPathComponent("\(slug).json")
+        let data = try JSONSerialization.data(withJSONObject: template, options: [.prettyPrinted, .sortedKeys])
+        try HybridStorage.writeAtomicVerified(data, to: dest)
+        return dest
     }
 
     static func builtInTemplate(for kind: ComfyMediaKind) -> [String: Any] {
@@ -188,7 +460,9 @@ final class ComfyUIClient: @unchecked Sendable {
 
     func status(prefs: ComfyConnectionPrefs, secrets: any SecretStore = AppSecrets.shared) async -> ComfySystemStatus {
         let pluginWorkflows = await MainActor.run { PluginHost.shared.activeComfyWorkflowPaths() }
-        let workflows = listSavedWorkflows(pluginWorkflows: pluginWorkflows).map(\.name) + ["built-in:image", "built-in:video", "built-in:audio"]
+        let workflows = listSavedWorkflows(pluginWorkflows: pluginWorkflows).map(\.name)
+            + Self.galleryPresets.map { "gallery:\($0.id)" }
+            + ["built-in:image", "built-in:video", "built-in:audio"]
 
         let baseURL: URL
         do {
@@ -326,6 +600,10 @@ final class ComfyUIClient: @unchecked Sendable {
                 let k = ComfyMediaKind(rawValue: String(selector.dropFirst("built-in:".count))) ?? request.kind
                 return (selector, Self.builtInTemplate(for: k))
             }
+            if let galleryGraph = Self.galleryTemplate(id: selector) {
+                let normalized = selector.hasPrefix("gallery:") ? selector : "gallery:\(selector)"
+                return (normalized, galleryGraph)
+            }
             throw ComfyError.invalidWorkflow("Workflow '\(selector)' not found.")
         }
         return ("built-in:\(request.kind.rawValue)", Self.builtInTemplate(for: request.kind))
@@ -356,13 +634,18 @@ final class ComfyUIClient: @unchecked Sendable {
 
         let pluginWorkflows = await MainActor.run { PluginHost.shared.activeComfyWorkflowPaths() }
         let (wfName, rawGraph) = try resolveWorkflowTemplate(request: request, pluginWorkflows: pluginWorkflows)
+        await MainActor.run { ComfyProgressMonitor.shared.begin(workflowName: wfName) }
+        defer { Task { @MainActor in ComfyProgressMonitor.shared.finish() } }
+
         var resolvedCheckpoint = "model.safetensors"
-        if wfName.hasPrefix("built-in:") || String(describing: rawGraph).contains("{{checkpoint}}") {
+        if wfName.hasPrefix("built-in:") || wfName.hasPrefix("gallery:") || String(describing: rawGraph).contains("{{checkpoint}}") {
             let ckpts = await fetchCheckpoints(baseURL: baseURL, secrets: secrets)
             if let firstCkpt = ckpts.first, !firstCkpt.isEmpty {
                 resolvedCheckpoint = firstCkpt
             }
         }
+        let defaultSteps = Self.galleryPresets.first(where: { wfName.contains($0.id) })?.defaultSteps ?? 20
+        let stepCount = max(1, min(100, request.steps ?? defaultSteps))
         let values: [String: Any] = [
             "{{prompt}}": request.prompt,
             "{{negative_prompt}}": request.negativePrompt,
@@ -370,6 +653,7 @@ final class ComfyUIClient: @unchecked Sendable {
             "{{width}}": request.width,
             "{{height}}": request.height,
             "{{frames}}": request.frames,
+            "{{steps}}": stepCount,
             "{{input_image}}": uploadedImageName,
             "{{checkpoint}}": resolvedCheckpoint,
         ]
@@ -481,6 +765,31 @@ final class ComfyUIClient: @unchecked Sendable {
         return nil
     }
 
+    static func parseWebSocketEvent(_ text: String) -> ComfyWSEvent? {
+        guard let data = text.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = obj["type"] as? String else {
+            return nil
+        }
+        let payload = obj["data"] as? [String: Any]
+        switch type {
+        case "execution_start":
+            return .executionStart(promptId: payload?["prompt_id"] as? String)
+        case "executing":
+            return .executing(node: payload?["node"] as? String)
+        case "progress":
+            guard let v = payload?["value"] as? Int, let m = payload?["max"] as? Int else { return nil }
+            return .progress(value: v, max: m, node: payload?["node"] as? String)
+        case "execution_error":
+            let msg = (payload?["exception_message"] as? String)
+                ?? (payload?["error"] as? String)
+                ?? "ComfyUI execution failed"
+            return .executionError(message: msg)
+        default:
+            return nil
+        }
+    }
+
     private func openProgressWebSocket(
         baseURL: URL,
         clientId: String,
@@ -497,19 +806,21 @@ final class ComfyUIClient: @unchecked Sendable {
         applyAuthHeaders(to: &req, secrets: secrets)
         let task = URLSession.shared.webSocketTask(with: req)
         task.resume()
-        if let onProgress {
-            Task.detached {
-                while task.state == .running {
-                    guard let msg = try? await task.receive() else { break }
-                    if case .string(let txt) = msg,
-                       let data = txt.data(using: .utf8),
-                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let type = obj["type"] as? String {
-                        if type == "progress", let d = obj["data"] as? [String: Any],
-                           let v = d["value"] as? Int, let m = d["max"] as? Int {
+        Task.detached {
+            while task.state == .running {
+                guard let msg = try? await task.receive() else { break }
+                if case .string(let txt) = msg, let event = Self.parseWebSocketEvent(txt) {
+                    await MainActor.run { ComfyProgressMonitor.shared.apply(event: event) }
+                    if let onProgress {
+                        switch event {
+                        case .progress(let v, let m, _):
                             onProgress("ComfyUI step \(v)/\(m)")
-                        } else if type == "executing" {
-                            onProgress("Executing ComfyUI node…")
+                        case .executing(let node):
+                            if let node, !node.isEmpty { onProgress("Executing ComfyUI node \(node)…") }
+                        case .executionStart:
+                            onProgress("ComfyUI execution started…")
+                        case .executionError(let err):
+                            onProgress("ComfyUI error: \(err)")
                         }
                     }
                 }

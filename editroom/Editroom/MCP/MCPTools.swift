@@ -889,6 +889,7 @@ extension MCPTools {
                   "include_audio": ["type": "boolean", "description": "Default true."],
                   "loudness": num("Target loudness in LUFS: -14 for YouTube and social, -16 for podcasts, -23 for broadcast. Leave out to keep the levels."),
                   "range_only": ["type": "boolean", "description": "Just the in/out range (see set_in_out)."],
+                  "auto_reframe": ["type": "boolean", "description": "Track speaker faces smoothly when cropping to vertical/square/portrait."],
                   "reframe_x": num("For a crop: which part to keep, 0 (left) to 1 (right). Default 0.5."),
                   "reframe_y": num("For a crop: 0 (top) to 1 (bottom). Default 0.5."),
                   "wait": ["type": "boolean", "description": "Wait until it's done (up to about 4 minutes) instead of returning straight away."]]),
@@ -986,6 +987,7 @@ extension MCPTools {
                 s.rangeOnly = true
             }
             s.reframe = CGPoint(x: (double(args["reframe_x"]) ?? 0.5).clamped(to: 0...1), y: (double(args["reframe_y"]) ?? 0.5).clamped(to: 0...1))
+            if let ar = args["auto_reframe"] as? Bool { s.autoReframe = ar }
             if s.format == .wav, !q.clips.contains(where: { $0.kind == .audio }) { throw MCPToolError("There's no sound on the timeline.") }
             // Where the person last exported to, else beside the project, else Movies.
             let fm = FileManager.default

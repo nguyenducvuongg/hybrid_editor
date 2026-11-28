@@ -98,10 +98,11 @@ final class TimelineInstruction: NSObject, AVVideoCompositionInstructionProtocol
     /// Bottom-most first.
     let layers: [RenderLayer]
 
-    /// The sequence is laid out at this size, and the output is the window at `offset` within it
-    /// (the same as the output, unless exporting to a different shape).
+    /// The sequence is laid out at this size, and the output is the window at `offset` (or dynamic
+    /// `reframePath`) within it (the same as the output, unless exporting to a different shape).
     let canvas: CGSize
     let offset: CGPoint
+    let reframePath: ReframePath?
     /// Captions, drawn over everything in the output's own frame.
     let captions: [CaptionLayer]
     /// Video drawn bigger than its own pixels is enlarged with the upscaler (on export), not just stretched.
@@ -110,12 +111,13 @@ final class TimelineInstruction: NSObject, AVVideoCompositionInstructionProtocol
     let hdr: Bool
 
     init(timeRange: CMTimeRange, layers: [RenderLayer], trackIDs: [CMPersistentTrackID], canvas: CGSize, offset: CGPoint = .zero,
-         captions: [CaptionLayer] = [], upscale: Bool = false, hdr: Bool = false) {
+         reframePath: ReframePath? = nil, captions: [CaptionLayer] = [], upscale: Bool = false, hdr: Bool = false) {
         self.upscale = upscale
         self.hdr = hdr
         self.timeRange = timeRange
         self.canvas = canvas
         self.offset = offset
+        self.reframePath = reframePath
         self.layers = layers
         self.captions = captions
         self.requiredSourceTrackIDs = trackIDs.map { NSNumber(value: $0) }
@@ -319,8 +321,9 @@ class TimelineCompositor: NSObject, AVVideoCompositing {
             }
             out = image.composited(over: out)
         }
-        if instruction.offset != .zero || output != size {
-            out = out.transformed(by: CGAffineTransform(translationX: -instruction.offset.x, y: -instruction.offset.y))
+        let activeOffset = instruction.reframePath?.offset(at: t, canvas: size, output: output) ?? instruction.offset
+        if activeOffset != .zero || output != size {
+            out = out.transformed(by: CGAffineTransform(translationX: -activeOffset.x, y: -activeOffset.y))
         }
         out = out.cropped(to: CGRect(origin: .zero, size: output))
         for caption in instruction.captions where t >= caption.start && t < caption.end {

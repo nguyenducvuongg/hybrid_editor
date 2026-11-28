@@ -59,11 +59,11 @@ enum CompositionBuilder {
     /// each track's sound itself (AudioStream), at once.
     static func build(project: Project, media: MediaStore, renderSize: CGSize,
                       includeVideo: Bool = true, includeAudio: Bool = true, reframe: CGPoint? = nil,
-                      keepAllTracks: Bool = false, upscale: Bool = false) -> BuiltTimeline? {
-        // The sequence is laid out on `canvas`, then `offset` picks the output's window from it.
+                      reframePath: ReframePath? = nil, keepAllTracks: Bool = false, upscale: Bool = false) -> BuiltTimeline? {
+        // The sequence is laid out on `canvas`, then `offset` (or dynamic `reframePath`) picks the output's window from it.
         var canvas = renderSize
         var offset = CGPoint.zero
-        if let center = reframe, renderSize.height > 0 {
+        if let center = reframe ?? reframePath?.fallback, renderSize.height > 0 {
             let pa = project.aspect, oa = renderSize.width / renderSize.height
             if abs(pa - oa) > 0.001 {
                 canvas = pa > oa ? CGSize(width: (renderSize.height * pa).rounded(), height: renderSize.height)
@@ -280,7 +280,7 @@ enum CompositionBuilder {
         }
         // The upscaler works in Rec.709; an HDR export is resized as before.
         vc.instructions = [TimelineInstruction(timeRange: range, layers: layers, trackIDs: requiredTracks, canvas: canvas, offset: offset,
-                                               captions: captions, upscale: upscale && !hdr, hdr: hdr)]
+                                               reframePath: reframePath, captions: captions, upscale: upscale && !hdr, hdr: hdr)]
 
         var mix: AVMutableAudioMix?
         if !mixParams.isEmpty {

@@ -20,6 +20,10 @@ struct ExportSettings: Equatable {
     var shape = Shape.original
     /// Which part of the picture to keep when cropping, as the crop's centre (0...1 across and down).
     var reframe = CGPoint(x: 0.5, y: 0.5)
+    /// Automatically track speaker faces across cuts when cropping (`16:9 -> 9:16`).
+    var autoReframe = false
+    /// Precomputed or analyzed dynamic crop trajectory for the export.
+    var reframePath: ReframePath? = nil
     /// Export just the in/out range, when the timeline has one.
     var rangeOnly = false
 
@@ -120,6 +124,22 @@ final class Exporter: ObservableObject {
             return
         }
         let wantsAudio = settings.format == .wav || settings.includeAudio
+        if settings.format == .mp4 && settings.autoReframe && settings.crops(project) && settings.reframePath == nil {
+            state = .running
+            measuringCancelled = false
+            Task { @MainActor in
+                let path = await AutoReframeEngine.analyze(project: project, media: media)
+                guard !self.measuringCancelled else {
+                    self.state = .idle
+                    return
+                }
+                var updated = settings
+                updated.reframePath = path
+                self.state = .idle
+                self.start(project: project, media: media, settings: updated, url: url)
+            }
+            return
+        }
         if let target = settings.loudness, wantsAudio,
            let mix = CompositionBuilder.build(project: project, media: media, renderSize: CGSize(width: 16, height: 16),
                                               includeVideo: false, includeAudio: true), mix.hasAudio {
@@ -154,6 +174,7 @@ final class Exporter: ObservableObject {
         guard let built = CompositionBuilder.build(project: project, media: media, renderSize: size,
                                                    includeVideo: !wav, includeAudio: wav || settings.includeAudio,
                                                    reframe: settings.crops(project) ? settings.reframe : nil,
+                                                   reframePath: settings.crops(project) ? settings.reframePath : nil,
                                                    // Video drawn bigger than its pixels (a 1080p sequence at 4K) is upscaled, not stretched.
                                                    upscale: true) else {
             state = .failed("The timeline is empty.")

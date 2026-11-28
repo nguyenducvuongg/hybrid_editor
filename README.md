@@ -23,7 +23,7 @@
 
 > **Legacy Archive:** The earlier Rust + Slint prototype based on `jub0t/Concat` is preserved intact on the [`archive/concat-m1`](../../tree/archive/concat-m1) branch (`concat-m1-archive` tag).
 
-### Key Capabilities (`M1-E` → `v1.2` Completed)
+### Key Capabilities (`M1-E` → `v1.3` Completed)
 
 | Milestone | Scope | Highlights |
 | :--- | :--- | :--- |
@@ -35,6 +35,7 @@
 | **M6-E** | Hardening & 5-Round 4K E2E | `ThisDeviceOnly` Keychain + `SecretRedactor`, Plugin env allowlist & core-secret block, Git hook & SSH option guards, strict IPv4/IPv6 `[::1]` MCP Host/Origin, `DELETE /mcp` cleanup, 5-round 4K HEVC E2E |
 | **v1.1** | Core Audit Fixes (`10/10`) | In-app tool filtering + `import_media` inside `AgentTurn`, multimodal tool screenshots (`inlineData` / `image_url`), Gemini schema sanitizer, streaming & Stop rollback, dynamic ComfyUI checkpoints, Stock `Add V2`, 5 auto-seeded built-in skills |
 | **v1.2** | Vietnamese Creator Suite | Word-level CapCut/Karaoke caption presets (`generate_vietnamese_captions`), BGM auto-ducking (`auto_duck_bgm`) & beat-aligned cuts (`beat_sync_cuts` via `MediaAnalyzer.music`), visual `Library > B-Roll` FTS5 browser with 1-click `Add V2` |
+| **v1.3** | Studio & Auto-Reframe | Apple Vision dynamic face-tracking `16:9 → 9:16/1:1/4:5` (`AutoReframeEngine`, `analyze_reframe`, `ExportSheet` toggle), 4 curated ComfyUI Workflow Gallery templates (`flux_schnell`, `flux_dev`, `wan21_i2v`, `stable_audio_sfx`) & live WebSocket denoising progress (`ComfyProgressMonitor`) |
 
 ---
 
@@ -54,9 +55,10 @@ hybrid_editor/
 │   │   └── UI/                  # AgentChatPanel, ExtensionsSettingsView, StockLibraryView, Timeline
 │   └── Vendor/ffmpeg/           # LGPL-2.1+ FFmpeg sidecar binary
 ├── assets/
-│   ├── editor-skills/           # Runtime video-editing SKILL.md workflows (4 built-in skills)
+│   ├── comfy-workflows/         # Curated ComfyUI API templates (`flux_schnell`, `flux_dev`, `wan21_i2v`, `stable_audio_sfx`)
+│   ├── editor-skills/           # Runtime video-editing SKILL.md workflows (5 built-in skills)
 │   └── colab/                   # `editroom_comfyui_colab.ipynb` (Cloudflare/Tailscale GPU setup)
-├── specs/                       # Spec Kit design specs, contracts & checklists (`001..007`)
+├── specs/                       # Spec Kit design specs, contracts & checklists (`001..010`)
 ├── docs/
 │   ├── ARCHITECTURE.md          # Detailed invariants (`I1–I6`), MCP tools & 3-tier B-roll ladder
 │   └── kit/                     # Antigravity Starter Kit docs
@@ -80,13 +82,14 @@ xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration 
 
 BIN="/tmp/hybrid_edit_editroom_dd/Build/Products/Debug/Editroom.app/Contents/MacOS/Editroom"
 
-# 2. Run all 6 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
+# 2. Run all 7 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_1 "$BIN" --hybrid-test /tmp/hybrid_out_1           # 7/7 checks (T1-T7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_2 "$BIN" --extensions-test /tmp/hybrid_out_2       # 7/7 checks (E1-E7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_3 "$BIN" --media-providers-test /tmp/hybrid_out_3  # 6/6 checks (M1-M6)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_4 "$BIN" --smart-editing-test /tmp/hybrid_out_4    # 6/6 checks (S1-S6)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_5 "$BIN" --hardening-4k-test /tmp/hybrid_out_5     # 11/11 checks (H1-H6, V1-V5)
 "$BIN" --creator-v12-test                                                                      # 6/6 checks (C1-C6)
+"$BIN" --studio-v13-test                                                                       # 5/5 checks (R1-R5)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) for detailed MCP tool schemas, architecture notes, and M4 Pro verification logs.
@@ -95,9 +98,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) fo
 
 ## Tiếng Việt
 
-**Hybrid Editor (`hybrid_edit_vid`)** là trình dựng phim native cho macOS Apple Silicon, xây dựng trên lõi [`robbietilton/Editroom`](https://github.com/robbietilton/Editroom) (`Swift / SwiftUI / AVFoundation / Metal`). Ứng dụng kết hợp chỉnh sửa timeline trực tiếp của người dùng với tác tử AI (**Agent Chat `⌘L`** + **MCP Server**), cài đặt **Skill từ GitHub** & **Plugin mở rộng**, tạo sinh media trên **ComfyUI Google Colab**, tìm **Stock miễn phí (Pexels/Pixabay)**, cùng bộ **Smart A-Roll Tiếng Việt (Whisper + VAD chống ảo giác)**, **Smart B-Roll 3 tầng (Local SQLite FTS5 -> Stock -> ComfyUI)**, **phụ đề Karaoke Tiếng Việt theo từng từ (`CapCut` / `Karaoke Pill`)**, **Auto-Ducking nhạc nền** và **khớp cắt theo nhịp Beat**.
+**Hybrid Editor (`hybrid_edit_vid`)** là trình dựng phim native cho macOS Apple Silicon, xây dựng trên lõi [`robbietilton/Editroom`](https://github.com/robbietilton/Editroom) (`Swift / SwiftUI / AVFoundation / Metal`). Ứng dụng kết hợp chỉnh sửa timeline trực tiếp của người dùng với tác tử AI (**Agent Chat `⌘L`** + **MCP Server**), cài đặt **Skill từ GitHub** & **Plugin mở rộng**, tạo sinh media trên **ComfyUI Google Colab**, tìm **Stock miễn phí (Pexels/Pixabay)**, cùng bộ **Smart A-Roll Tiếng Việt (Whisper + VAD chống ảo giác)**, **Smart B-Roll 3 tầng (Local SQLite FTS5 -> Stock -> ComfyUI)**, **phụ đề Karaoke Tiếng Việt theo từng từ (`CapCut` / `Karaoke Pill`)**, **Auto-Ducking nhạc nền**, **khớp cắt theo nhịp Beat**, **Auto-Reframe bám khuôn mặt `16:9 → 9:16`** và **ComfyUI Workflow Gallery + WebSocket progress realtime**.
 
 > **Lưu trữ mã nguồn Concat cũ:** Phiên bản thử nghiệm Rust/Slint trước đây dựa trên `jub0t/Concat` được giữ nguyên tại nhánh [`archive/concat-m1`](../../tree/archive/concat-m1) và tag `concat-m1-archive`.
 
 ### Lộ trình hiện tại
-- ✅ **M1-E → M6-E**, **v1.1 Core Audit Fixes** & **v1.2 Bộ tính năng Creator Tiếng Việt** đã hoàn thành và kiểm chứng thực nghiệm **43/43 bài test tự động trên 6 suite** trên Apple M4 Pro (bao gồm phụ đề Karaoke export parity, Auto-Ducking BGM, Beat-Sync Cuts, B-Roll Browser & E2E 4K HEVC).
+- ✅ **M1-E → M6-E**, **v1.1 Core Audit Fixes**, **v1.2 Creator Tiếng Việt** & **v1.3 ComfyUI Studio + Auto-Reframe** đã hoàn thành và kiểm chứng thực nghiệm **48/48 bài test tự động trên 7 suite** trên Apple M4 Pro.

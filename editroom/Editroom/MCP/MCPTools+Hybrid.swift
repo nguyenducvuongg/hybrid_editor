@@ -79,10 +79,11 @@ extension MCPTools {
                  ["kind": str("Media kind: image, video, or audio."),
                   "prompt": str("Positive generation prompt."),
                   "negative_prompt": str("Optional negative prompt."),
-                  "workflow": str("Optional saved workflow name or JSON path."),
+                  "workflow": str("Optional saved workflow name, gallery preset (flux_schnell, flux_dev, wan21_i2v, stable_audio_sfx), or JSON path."),
                   "width": ["type": "integer", "description": "Output width in pixels."],
                   "height": ["type": "integer", "description": "Output height in pixels."],
                   "frames": ["type": "integer", "description": "Frame count for video workflows."],
+                  "steps": ["type": "integer", "description": "Optional denoising step count (1...100)."],
                   "seed": ["type": "integer", "description": "Deterministic seed."],
                   "reference_clip_id": str("Optional clip_id whose frame at reference_time is uploaded for I2V."),
                   "reference_time": num("Timeline timestamp in seconds for reference_clip_id."),
@@ -164,6 +165,12 @@ extension MCPTools {
                   "bpm": num("Optional explicit BPM (40...240) to synthesize a strict beat grid."),
                   "start_time": num("Optional timeline anchor time in seconds."),
                   "session_id": str("Optional held lease session_id.")]),
+            tool("analyze_reframe", "Analyze speaker face trajectory for auto-reframe",
+                 "Runs Apple Vision face detection + EMA smoothing across the timeline to produce crop keyframes for vertical/square/portrait export.",
+                 ["shape": ["type": "string", "enum": ["vertical", "square", "portrait"], "description": "Target cropped aspect shape (default vertical 9:16)."],
+                  "sample_interval_sec": num("Analysis frame interval in seconds (0.25...2.0, default 0.5)."),
+                  "include_preview": ["type": "boolean", "description": "Return a cropped JPEG contact sheet preview across 4 timestamps."]],
+                 readOnly: true),
         ]
     }
 
@@ -385,6 +392,18 @@ extension MCPTools {
 
         case "comfy_status":
             let status = await ComfyUIClient.shared.status(prefs: ComfyConnectionPrefs.load())
+            let galleryRows: [[String: Any]] = status.galleryPresets.map { p in
+                [
+                    "id": p.id,
+                    "name": p.name,
+                    "kind": p.kind.rawValue,
+                    "badge": p.badge,
+                    "steps": p.defaultSteps,
+                    "width": p.defaultWidth,
+                    "height": p.defaultHeight,
+                    "vram_gb": p.recommendedVRAMGB,
+                ]
+            }
             return json([
                 "endpoint": status.endpoint,
                 "mode": status.mode,
@@ -393,6 +412,7 @@ extension MCPTools {
                 "vram_total_mb": status.vramTotalMB ?? NSNull(),
                 "vram_free_mb": status.vramFreeMB ?? NSNull(),
                 "available_workflows": status.availableWorkflows,
+                "gallery_presets": galleryRows,
                 "checkpoints": status.checkpoints,
                 "error": status.errorMessage ?? NSNull(),
             ])
@@ -431,6 +451,7 @@ extension MCPTools {
                 width: max(64, (args["width"] as? Int) ?? p.width),
                 height: max(64, (args["height"] as? Int) ?? p.height),
                 frames: max(1, (args["frames"] as? Int) ?? 25),
+                steps: (args["steps"] as? Int).map { max(1, min(100, $0)) },
                 seed: (args["seed"] as? Int) ?? Int.random(in: 1...Int(Int32.max)),
                 referenceImagePNG: refPNG
             )
@@ -953,6 +974,43 @@ extension MCPTools {
                 "revision": Int(model.revision),
             ])
 
+        case "analyze_reframe":
+            let p = draft?.project ?? model.project
+            guard p.duration > 0 else { throw MCPToolError("The timeline is empty.") }
+            let shapeStr = ((args["shape"] as? String) ?? "vertical").lowercased()
+            let shape: ExportSettings.Shape
+            switch shapeStr {
+            case "vertical": shape = .vertical
+            case "square": shape = .square
+            case "portrait": shape = .portrait
+            default: throw MCPToolError("Unsupported shape '\(shapeStr)'; use vertical, square, or portrait.")
+            }
+            let interval = min(2.0, max(0.25, double(args["sample_interval_sec"]) ?? 0.5))
+            let path = await AutoReframeEngine.analyze(project: p, media: model.media, sampleIntervalSec: interval)
+            let kfJSON: [[String: Any]] = path.keyframes.map { kf in
+                ["time": round3(kf.time), "x": round3(kf.x), "y": round3(kf.y)]
+            }
+            var out = json([
+                "shape": shape.rawValue,
+                "duration": round3(p.duration),
+                "keyframe_count": path.keyframes.count,
+                "keyframes": kfJSON,
+            ])
+            if (args["include_preview"] as? Bool) == true {
+                var s = ExportSettings()
+                s.shape = shape
+                s.height = 360
+                let size = s.renderSize(for: p)
+                let dur = max(0.1, p.duration)
+                let times = stride(from: 0.0, through: max(0.0, dur - 0.05), by: max(0.25, dur / 3.9)).prefix(4).map { $0 }
+                if let sheet = await Self.renderTimelineStrip(project: p, media: model.media, timestamps: Array(times),
+                                                              tileWidth: Int(size.width), gridCols: 4,
+                                                              renderSizeOverride: size, reframePath: path) {
+                    out.insert(["type": "image", "data": sheet.jpeg.base64EncodedString(), "mimeType": "image/jpeg"], at: 0)
+                }
+            }
+            return out
+
         default:
             return nil
         }
@@ -1150,13 +1208,21 @@ extension MCPTools {
     // MARK: Core-Renderer Timeline Strip (`I3`, `P2`)
 
     private static func renderTimelineStrip(project p: Project, media: MediaStore, timestamps: [Double],
-                                            tileWidth: Int, gridCols: Int?) async -> (jpeg: Data, times: [Double], pixelWidth: Int, pixelHeight: Int)? {
-        let aspect = max(0.1, Double(p.width) / Double(max(1, p.height)))
-        let w = max(2, ((Double(tileWidth) / 2).rounded()) * 2)
-        let h = max(2, ((w / aspect / 2).rounded()) * 2)
-        let tileSize = CGSize(width: w, height: h)
+                                            tileWidth: Int, gridCols: Int?,
+                                            renderSizeOverride: CGSize? = nil,
+                                            reframePath: ReframePath? = nil) async -> (jpeg: Data, times: [Double], pixelWidth: Int, pixelHeight: Int)? {
+        let tileSize: CGSize
+        if let override = renderSizeOverride {
+            tileSize = override
+        } else {
+            let aspect = max(0.1, Double(p.width) / Double(max(1, p.height)))
+            let w = max(2, ((Double(tileWidth) / 2).rounded()) * 2)
+            let h = max(2, ((w / aspect / 2).rounded()) * 2)
+            tileSize = CGSize(width: w, height: h)
+        }
 
-        guard let built = CompositionBuilder.build(project: p, media: media, renderSize: tileSize, includeAudio: false) else {
+        guard let built = CompositionBuilder.build(project: p, media: media, renderSize: tileSize,
+                                                   includeAudio: false, reframePath: reframePath) else {
             return nil
         }
         let generator = AVAssetImageGenerator(asset: built.composition)

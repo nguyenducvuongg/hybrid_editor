@@ -1,0 +1,70 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{input_image}}"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "{{checkpoint}}"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "{{prompt}}"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "{{negative_prompt}}"
+    }
+  },
+  "5": {
+    "class_type": "WanImageToVideo",
+    "inputs": {
+      "batch_size": 1,
+      "height": "{{height}}",
+      "length": "{{frames}}",
+      "negative": ["4", 0],
+      "positive": ["3", 0],
+      "start_image": ["1", 0],
+      "width": "{{width}}"
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 6.0,
+      "denoise": 1.0,
+      "latent_image": ["5", 2],
+      "model": ["2", 0],
+      "negative": ["5", 1],
+      "positive": ["5", 0],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "seed": "{{seed}}",
+      "steps": "{{steps}}"
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["6", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "8": {
+    "class_type": "SaveWEBM",
+    "inputs": {
+      "filename_prefix": "editroom_wan21_i2v",
+      "fps": 16,
+      "images": ["7", 0]
+    }
+  }
+}

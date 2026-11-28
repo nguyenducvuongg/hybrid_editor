@@ -139,8 +139,23 @@ struct ExportSheet: View {
                             Button(shape.label) {
                                 settings.shape = shape
                                 settings.reframe = CGPoint(x: 0.5, y: 0.5)
+                                settings.reframePath = nil
                             }
                         }
+                    }
+                }
+                if settings.crops(model.project) {
+                    row("Auto-Reframe") {
+                        HStack {
+                            Toggle("Face Tracking", isOn: $settings.autoReframe)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .tint(Theme.accent)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 11)
+                        .frame(height: h)
+                        .sheetField()
                     }
                 }
                 row("Codec") {
