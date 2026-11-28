@@ -6,6 +6,7 @@ struct LibraryView: View {
     @ObservedObject var media: MediaStore
     @State private var dropTargeted = false
     @State private var search = ""
+    @State private var showStock = false
     /// Thumbnails (the default) or a list, from Settings > General.
     @AppStorage(MediaLayout.key) private var layout = MediaLayout.thumbnails
     /// How wide the panel is, so a list's pictures can grow a little when it's widened.
@@ -79,8 +80,12 @@ struct LibraryView: View {
         }
         return VStack(spacing: 0) {
             HStack(spacing: 6) {
-                // In a folder: back, and the way down to it, in place of the title.
-                if let folder {
+                if showStock {
+                    Text("STOCK")
+                        .font(Theme.label())
+                        .kerning(1.6)
+                        .foregroundStyle(Theme.textDim)
+                } else if let folder {
                     MediaTitle(model: model, tree: tree, folder: folder)
                 } else {
                     Text("MEDIA")
@@ -92,9 +97,15 @@ struct LibraryView: View {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
                 }
                 Spacer()
-                AddButton(model: model, symbol: "textformat", payload: .text, help: "Text: click to add at the playhead, or drag to the timeline")
-                AddButton(model: model, symbol: "solid", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
-                IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
+                IconButton(symbol: showStock ? "film.stack" : "globe", size: 26,
+                           help: showStock ? "Show Local Media" : "Browse Free Stock (Pexels / Pixabay)") {
+                    showStock.toggle()
+                }
+                if !showStock {
+                    AddButton(model: model, symbol: "textformat", payload: .text, help: "Text: click to add at the playhead, or drag to the timeline")
+                    AddButton(model: model, symbol: "solid", payload: .solid, help: "Solid: click to add at the playhead, or drag to the timeline")
+                    IconButton(symbol: "square.and.arrow.down", size: 26, help: "Import Media (⌘I)") { model.showImportPanel() }
+                }
             }
             .padding(.leading, 16)
             .padding(.trailing, 12)
@@ -103,6 +114,9 @@ struct LibraryView: View {
             // Right-click: the header buttons' actions in words, and how the list looks.
             .contextMenu { panelMenu }
 
+            if showStock {
+                StockLibraryView(model: model)
+            } else {
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -204,6 +218,7 @@ struct LibraryView: View {
                 }
             }
             }
+        }
         }
         .background(Theme.panel)
         .background(GeometryReader { g in

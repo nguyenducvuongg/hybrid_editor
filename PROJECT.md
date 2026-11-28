@@ -134,8 +134,8 @@
 
 ### Lộ trình tiếp theo trên lõi `Editroom` (`feat/editroom-core`)
 - **M1-E · Core Guardrails & Hybrid MCP (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** ✅ Hoàn thành (`specs/002-editroom-guardrails-mcp/`, `62ff8c67`).
-- **M2-E · Secrets, GitHub Skills, 3-Tier Plugins & Multi-Provider Chat Backend:** ✅ Hoàn thành (`specs/003-extensions-agent-backend/`).
-- **M3-E · Native Hybrid UI:** Sidebar **Agent Chat** thu/mở (`⌘L`) hỗ trợ hội thoại nhiều lượt, `/skill`, `@mention`, thẻ `AgentTurn` có `Keep`/`Undo Turn`/`Rollback`; thêm tab **Skills**, **Plugins**, **Integrations** trong `SettingsView` + trình duyệt **Stock** nhanh trong `LibraryView`.
+- **M2-E · Secrets, GitHub Skills, 3-Tier Plugins & Multi-Provider Chat Backend:** ✅ Hoàn thành (`specs/003-extensions-agent-backend/`, `63590a9a`).
+- **M3-E · Native Hybrid UI:** ✅ Hoàn thành (`specs/004-native-hybrid-ui/`): Sidebar **Agent Chat** thu/mở (`⌘L`), tab **Skills**, **Plugins**, **Integrations** trong `SettingsView` + trình duyệt **Stock** nhanh trong `LibraryView`.
 - **M4-E · ComfyUI Colab Tunnel & Stock APIs:** `TunnelManager` (SSH Tunnel / Tailscale / Cloudflare Tunnel), `ComfyUIClient` (REST + WebSocket + `/upload/image` I2V + Workflow JSON templates + Colab notebook), `PexelsProvider` & `PixabayProvider`, 4 MCP tools (`comfy_status`, `comfy_generate`, `search_stock_media`, `import_stock_media`) + 2 built-in skills.
 - **M5-E · Smart A-Roll Tiếng Việt & Smart B-Roll 3 Tầng:** `TranscriptionProvider` (`whisper.cpp` Metal `large-v3-turbo` + Silero VAD, test 10s im lặng `P6`) + `VisualIndexProvider` (Local VLM + SQLite FTS5) với chuỗi dự phòng tự động: **1. B-Roll local → 2. Pexels/Pixabay → 3. Sinh mới qua ComfyUI Colab**.
 - **M6-E · Hardening & 5-Round 4K E2E:** Rà soát bảo mật Keychain/Plugin/GitHub, tối ưu Antigravity 2.0 live-attach và benchmark E2E 5 vòng liên tiếp trên 4K/1080p footage.
@@ -184,3 +184,22 @@
 | `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` sau khi thêm `Extensions/`, `Agent/`, `ExtensionsTest` | **`** BUILD SUCCEEDED **`** (`exit 0`) |
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m2e_data .../Editroom --extensions-test /tmp/hybrid_edit_m2e_out` (`BypassSandbox: true`) | Bộ 6 test (`E1–E6`): `FileSecretStore` `0o600`, `SkillRegistry` local + GitHub pin + traversal guard, `PluginHost` Tier B `list_looks`, Tier A Python MCP sidecar trust gate + `stopAll()`, `ChatSessionStore` `AgentTurn` Undo/Rollback + Antigravity merge, `OpenAICompatibleHTTPProvider` loopback `NWListener` tool-calls | **6/6 PASSED** (`ALL 6 EXTENSION CHECKS PASSED`, `exit 0`, ~12s) |
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Kiểm tra hồi quy toàn bộ guardrails M1-E (`T1–T7`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~10s) |
+
+---
+
+## 8. Milestone 3-E — Native Hybrid UI (`2026-11-28`)
+
+### Kiến trúc UI đã triển khai (`specs/004-native-hybrid-ui/`)
+- **Sidebar Agent Chat (`⌘L`):** [AgentChatPanel.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/AgentChatPanel.swift), [ContentView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/ContentView.swift), [Workspace.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Model/Workspace.swift), [EditroomApp.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/EditroomApp.swift) — khung chat nhiều lượt bên cạnh `InspectorView` (kèm nút `"Chat"` trên toolbar), chọn provider (`Gemini`, `Ollama`, `OpenAI-Compat`, `Claude Code`, `Codex`), chọn thread theo dự án, bật/tắt chip `/skill`, chèn nhanh `@playhead` / `@selected`, theo dõi tool calls và thẻ `AgentTurn` có nút **`Undo Turn`** đồng bộ `Cmd+Z`.
+- **Settings Mở rộng (Skills, Plugins, Integrations):** [ExtensionsSettingsView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/ExtensionsSettingsView.swift), [SettingsView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/SettingsView.swift), [IntegrationPrefs.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/IntegrationPrefs.swift):
+  - **Skills:** Cài từ GitHub URL hoặc thư mục local, xem trước nội dung `SKILL.md`, bật/tắt/xóa.
+  - **Plugins:** Cài plugin Tier A/B, bắt buộc hộp thoại xác nhận **Trust & Enable** hiển thị lệnh thực thi trước khi bật MCP sidecar.
+  - **Integrations:** Nhập API key an toàn vào `AppSecrets.shared` (AI Chat, Pexels, Pixabay) + cấu hình ComfyUI Google Colab Tunnel (`Cloudflare` / `Tailscale` / `SSH`) kèm nút **Test Connection** (`GET /system_stats`).
+- **Stock Browser trong Library:** [StockLibraryView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/StockLibraryView.swift), [LibraryView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/LibraryView.swift) — nút chuyển nhanh `Media` / `Stock` ngay trên header thư viện.
+
+### Kiểm chứng thực nghiệm trên M4 Pro (`2026-11-28`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` với các view SwiftUI mới | **`** BUILD SUCCEEDED **`** (`exit 0`, ~12s) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m3e_data .../Editroom --extensions-test /tmp/hybrid_edit_m3e_out` (`BypassSandbox: true`) | Bộ 7 test (`E1–E7`), gồm `E7` (`NSHostingView` layout smoke test 5 view + `ComfyConnectionPrefs`/`ChatProviderPrefs` round-trip) | **7/7 PASSED** (`ALL 7 EXTENSION CHECKS PASSED`, `exit 0`, ~10s) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Hồi quy guardrails M1-E (`T1–T7`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~11s) |

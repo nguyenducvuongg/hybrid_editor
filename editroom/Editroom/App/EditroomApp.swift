@@ -345,6 +345,8 @@ struct EditroomApp: App {
                 Toggle("Sticky Edges", isOn: bind(\.sticky)).keyboardShortcut(keys.menu(.sticky))
                 Toggle("Skimming", isOn: bind(\.skimming)).keyboardShortcut(keys.menu(.skimming))
                 Toggle("Audio Scrubbing", isOn: bind(\.audioScrub)).keyboardShortcut(keys.menu(.audioScrubbing))
+                Divider()
+                Button("Agent Chat") { PanelLayout.shared.showAgentChat.toggle() }.keyboardShortcut("l", modifiers: .command)
             }
             CommandGroup(before: .windowArrangement) {
                 Button("Show Previous Tab") { workspace.selectPrevious() }.keyboardShortcut(keys.menu(.previousTab))

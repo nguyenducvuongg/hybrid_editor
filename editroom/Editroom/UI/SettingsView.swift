@@ -6,17 +6,22 @@ struct SettingsView: View {
     @ObservedObject var model: EditorModel
 
     enum Tab: String, CaseIterable, Identifiable {
-        case general = "General", shortcuts = "Shortcuts", magic = "Magic", updates = "Updates"
+        case general = "General", shortcuts = "Shortcuts", magic = "Magic"
+        case skills = "Skills", plugins = "Plugins", integrations = "Integrations"
+        case updates = "Updates"
         var id: Self { self }
         var symbol: String {
             switch self {
             case .general: "gearshape"
             case .shortcuts: "keyboard"
             case .magic: "wand.and.sparkles"
+            case .skills: "book.closed"
+            case .plugins: "puzzlepiece.extension"
+            case .integrations: "key.horizontal"
             case .updates: "arrow.down.circle"
             }
         }
-        /// The tab's name kept in UserDefaults ("general", "shortcuts", "magic", "updates").
+        /// The tab's name kept in UserDefaults.
         var key: String { rawValue.lowercased() }
     }
 
@@ -44,13 +49,16 @@ struct SettingsView: View {
                 case .general: GeneralSettings()
                 case .shortcuts: ShortcutSettings()
                 case .magic: MagicSettings(model: model)
+                case .skills: SkillsSettingsView()
+                case .plugins: PluginsSettingsView()
+                case .integrations: IntegrationsSettingsView()
                 case .updates: UpdateSettings()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .id(themes.look)
-        .frame(width: 600, height: 640)
+        .frame(width: 700, height: 660)
         .background(Theme.panel)
         .navigationTitle("Settings")
         .preferredColorScheme(Theme.scheme)
@@ -77,7 +85,7 @@ struct SettingsView: View {
 }
 
 /// A settings page's name, at the top of what scrolls (the tab above already says where you are).
-private struct PageTitle: View {
+struct PageTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -89,7 +97,7 @@ private struct PageTitle: View {
     }
 }
 
-private struct SectionLabel: View {
+struct SectionLabel: View {
     let text: String
     var body: some View {
         Text(text.uppercased()).font(Theme.label()).kerning(1.4).foregroundStyle(Theme.textFaint)
@@ -198,7 +206,7 @@ private struct SpeechLanguageRow: View {
 }
 
 /// A small grey label over a rounded box of settings, like the inspector's section names.
-private struct SettingsSection<Content: View>: View {
+struct SettingsSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -222,7 +230,7 @@ private struct SettingsSection<Content: View>: View {
 }
 
 /// One setting: its name (and a line on what it does) on the left, its control on the right.
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String?
     @ViewBuilder let control: Control

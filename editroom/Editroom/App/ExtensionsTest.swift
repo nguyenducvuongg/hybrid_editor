@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Network
+import SwiftUI
 
 /// Mock `AgentProvider` for deterministic multi-turn `AgentTurn` + rollback verification.
 private final class MockAgentProvider: AgentProvider, @unchecked Sendable {
@@ -599,7 +601,58 @@ enum ExtensionsTest {
             return fail("E6", "error: \(error.localizedDescription)")
         }
         log("PASS [E6] Live OpenAICompatibleHTTPProvider tool-call E2E verified")
-        log("ALL 6 EXTENSION CHECKS PASSED")
+
+        // =========================================================================
+        // E7: Native Hybrid UI Smoke & Preferences Round-Trip (`M3-E`)
+        // =========================================================================
+        let suiteName = "local.hybrideditvid.m3e-test-\(UUID().uuidString)"
+        guard let testDefaults = UserDefaults(suiteName: suiteName) else {
+            return fail("E7", "could not create isolated UserDefaults suite")
+        }
+        defer { testDefaults.removePersistentDomain(forName: suiteName) }
+
+        var comfy = ComfyConnectionPrefs()
+        comfy.mode = .tailscale
+        comfy.endpointURL = "http://100.64.0.12:8188"
+        comfy.save(defaults: testDefaults)
+        let loadedComfy = ComfyConnectionPrefs.load(defaults: testDefaults)
+        guard loadedComfy == comfy else {
+            return fail("E7", "ComfyConnectionPrefs UserDefaults round-trip mismatch")
+        }
+
+        var chatPrefs = ChatProviderPrefs()
+        chatPrefs.selectedProvider = .ollama
+        chatPrefs.ollamaModel = "qwen2.5:14b"
+        chatPrefs.save(defaults: testDefaults)
+        let loadedChat = ChatProviderPrefs.load(defaults: testDefaults)
+        guard loadedChat == chatPrefs else {
+            return fail("E7", "ChatProviderPrefs UserDefaults round-trip mismatch")
+        }
+
+        let prevShowChat = PanelLayout.shared.showAgentChat
+        PanelLayout.shared.showAgentChat.toggle()
+        guard PanelLayout.shared.showAgentChat != prevShowChat else {
+            return fail("E7", "PanelLayout.showAgentChat did not toggle")
+        }
+        PanelLayout.shared.showAgentChat = prevShowChat
+
+        let hosts: [(String, NSView, CGSize)] = [
+            ("AgentChatPanel", NSHostingView(rootView: AgentChatPanel(model: model)), CGSize(width: 340, height: 560)),
+            ("SkillsSettingsView", NSHostingView(rootView: SkillsSettingsView()), CGSize(width: 680, height: 560)),
+            ("PluginsSettingsView", NSHostingView(rootView: PluginsSettingsView()), CGSize(width: 680, height: 560)),
+            ("IntegrationsSettingsView", NSHostingView(rootView: IntegrationsSettingsView()), CGSize(width: 680, height: 560)),
+            ("StockLibraryView", NSHostingView(rootView: StockLibraryView(model: model)), CGSize(width: 260, height: 420)),
+        ]
+        for (name, view, sz) in hosts {
+            view.frame = NSRect(origin: .zero, size: sz)
+            view.layoutSubtreeIfNeeded()
+            let fit = view.fittingSize
+            guard fit.width > 0 && fit.height > 0 else {
+                return fail("E7", "\(name) produced empty fittingSize \(fit)")
+            }
+        }
+        log("PASS [E7] Native Hybrid UI NSHostingView smoke + prefs round-trip verified")
+        log("ALL 7 EXTENSION CHECKS PASSED")
         return true
     }
 }

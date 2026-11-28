@@ -38,6 +38,13 @@ struct ContentView: View {
                     InspectorView(model: model)
                         .frame(width: InspectorView.width)
                         .background(MagicAnchor(key: "inspector"))
+                    if layout.showAgentChat {
+                        Splitter(vertical: true) { x in
+                            layout.agentChatWidth = min(520, max(280, frame.maxX - x))
+                        }
+                        AgentChatPanel(model: model)
+                            .frame(width: layout.agentChatWidth)
+                    }
                 }
                 .allowsHitTesting(!locked)
                 Splitter(vertical: false) { y in
@@ -118,6 +125,8 @@ struct WindowRoot: View {
                             MagicButton(model: model)
                                 .padding(.trailing, 8)
                         }
+                        ChatSidebarToggle()
+                            .padding(.trailing, 8)
                         PillButton(title: "Export", prominent: true) { model.showExport = true }
                             .help("Export (\(ShortcutStore.shared.combos(.export).first?.display ?? "⌘E"))")
                     }
@@ -126,6 +135,32 @@ struct WindowRoot: View {
                 }
                 .withoutGlass()
             }
+    }
+}
+
+private struct ChatSidebarToggle: View {
+    @ObservedObject private var layout = PanelLayout.shared
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            layout.showAgentChat.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Chat")
+                    .font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundStyle(layout.showAgentChat ? Theme.text : Theme.textDim)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(Capsule().fill(Theme.ink.opacity(layout.showAgentChat ? 0.16 : hovering ? 0.12 : 0.08)))
+            .overlay(Capsule().strokeBorder(layout.showAgentChat ? Theme.accent.opacity(0.6) : Theme.ink.opacity(0.05)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Toggle Agent Chat sidebar (⌘L)")
     }
 }
 

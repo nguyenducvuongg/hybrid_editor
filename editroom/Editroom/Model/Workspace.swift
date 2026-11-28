@@ -170,4 +170,8 @@ final class PanelLayout: ObservableObject {
     static let shared = PanelLayout()
     @Published var libraryWidth: CGFloat = 252
     @Published var timelineHeight: CGFloat = 360
+    @Published var showAgentChat: Bool = UserDefaults.standard.bool(forKey: "showAgentChat") {
+        didSet { UserDefaults.standard.set(showAgentChat, forKey: "showAgentChat") }
+    }
+    @Published var agentChatWidth: CGFloat = 340
 }
