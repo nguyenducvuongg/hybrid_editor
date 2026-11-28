@@ -1,3 +1,0 @@
-/target
-# A second build folder beside it, for one crate or one job at a time.
-/target-*/
