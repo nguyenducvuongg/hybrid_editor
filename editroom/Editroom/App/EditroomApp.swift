@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Updates.shared.start() }
-        let testFlags = ["--hybrid-test", "--extensions-test", "--media-providers-test", "--smart-editing-test", "--hardening-4k-test", "--creator-v12-test", "--studio-v13-test", "--selftest"]
+        let testFlags = ["--hybrid-test", "--extensions-test", "--media-providers-test", "--smart-editing-test", "--hardening-4k-test", "--creator-v12-test", "--studio-v13-test", "--ecosystem-v20-test", "--selftest"]
         if !testFlags.contains(where: { CommandLine.arguments.contains($0) }) {
             Task { @MainActor in
                 _ = SkillRegistry.shared.seedBuiltInSkills(force: false)
@@ -227,6 +227,7 @@ struct EditroomApp: App {
         Hardening4KBenchmarkTest.runIfRequested()
         CreatorFeaturesTest.runIfRequested()
         StudioV13Test.runIfRequested()
+        EcosystemV20Test.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }

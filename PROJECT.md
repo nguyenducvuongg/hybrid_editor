@@ -307,3 +307,20 @@
 | :--- | :--- | :--- |
 | `--studio-v13-test` ([StudioV13Test.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/StudioV13Test.swift)) | `R1–R5`: nội suy `ReframePath` + EMA, xuất dọc `360×640` bám vùng `earlyR=217 -> lateB=219`, `analyze_reframe` + `ExportSheet` (`keyframes=5`), 4 Gallery Presets + bind placeholder + `comfy_status`, WS parser + `ComfyProgressMonitor` + UI smoke | **5/5 PASSED** (`ALL 5 STUDIO V1.3 CHECKS PASSED`, `exit 0`) |
 | `--creator-v12-test` + `--hardening-4k-test` + `--smart-editing-test` + `--media-providers-test` + `--extensions-test` + `--hybrid-test` | Hồi quy toàn bộ M1-E → `v1.2` (`tools=65`, `bytes=43,717`, `rounds=488 ms`, `export_4k_hevc=2.21 s`) | **6/6 + 11/11 + 6/6 + 6/6 + 7/7 + 7/7 PASSED** (**48/48 checks across 7 suites**) |
+
+---
+
+## 15. Phase D (`v2.0`) — Đóng gói Phát hành, GitHub CI/CD & Hệ sinh thái Explore (`2026-11-28`)
+
+### Kiến trúc đã triển khai (`specs/011-v20-release-ecosystem/`)
+- **Explore Skills / Plugins Marketplace & Tier B Pack:**
+  - [ExploreCatalog.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/ExploreCatalog.swift), [community_catalog.json](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/catalog/community_catalog.json), [plugin.json](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/plugins/vietnamese-cinematic-pack/plugin.json), [saigon_golden_hour.cube](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/plugins/vietnamese-cinematic-pack/luts/saigon_golden_hour.cube), [ExtensionsSettingsView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/ExtensionsSettingsView.swift), [SettingsView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/SettingsView.swift), [MCPTools+Hybrid.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/MCPTools+Hybrid.swift): Thêm `ExploreCatalogStore` hỗ trợ tìm tiếng Việt có/không dấu, refresh HTTPS có cache cục bộ (`HybridStorage.subdir("Catalog")`), tab **`Settings > Explore`** với cài đặt 1 chạm qua `SkillRegistry` / `PluginHost`, MCP tool `browse_catalog`, và plugin Tier B mẫu `vietnamese-cinematic-pack`.
+- **Sparkle Update Feed, Đóng gói `.dmg` & GitHub Actions CI/CD:**
+  - [package-dmg.sh](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/scripts/package-dmg.sh), [ci.yml](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/.github/workflows/ci.yml), [release.yml](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/.github/workflows/release.yml), [Info.plist](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Info.plist), [appcast.xml](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/appcast.xml): Nâng `MARKETING_VERSION = 2.0.0` (`CURRENT_PROJECT_VERSION = 20`), trỏ `SUFeedURL` về `nguyenducvuongg/hybrid_editor`, tạo script đóng gói `UDZO` `.dmg` (`hdiutil verify` + `.sha256` + Sparkle `appcast.xml`) cùng 2 workflow CI (chạy đủ 8 suite trên `macos-15`) và Release tự động theo tag `v*`.
+
+### Kiểm chứng thực nghiệm sau lần sửa cuối (`M4 Pro`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `--ecosystem-v20-test` ([EcosystemV20Test.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/EcosystemV20Test.swift)) | `D1–D5`: `ExploreCatalogStore` (search VI + HTTPS guard + refresh), `vietnamese-cinematic-pack` Tier B LUT/workflow install, `browse_catalog` MCP + `SettingsView`/`ExploreCatalogView` smoke, `Info.plist`/`appcast.xml`/workflows, Bundle `v2.0.0 (20)` & Sparkle guard | **5/5 PASSED** (`ALL 5 ECOSYSTEM V2.0 CHECKS PASSED`, `exit 0`) |
+| Toàn bộ 7 bộ hồi quy (`--studio-v13-test` … `--hybrid-test`) | Toàn bộ M1-E → `v1.3` (`tools=66`, `bytes=44,215`, `rounds=486 ms`, `export_4k_hevc=2.31 s`) | **53/53 PASSED across 8 suites** (`exit 0`) |
+| `./scripts/package-dmg.sh` dry-run | Đóng gói `Editroom-2.0.0.dmg` thật + `hdiutil verify` + `.sha256` + `appcast.xml` | **`32,403,452 bytes` (`31M`), `checksum VALID`** |

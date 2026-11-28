@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "vietnamese-cinematic-pack",
+  "name": "Vietnamese Cinematic Pack",
+  "version": "1.0.0",
+  "description": "Warm Saigon Golden Hour 3D LUT (.cube) and Flux workflow template for Vietnamese creator reels.",
+  "author": "hybrid_edit_vid",
+  "luts": [
+    "luts/saigon_golden_hour.cube"
+  ],
+  "workflows": [
+    "workflows/saigon_street_flux.json"
+  ]
+}

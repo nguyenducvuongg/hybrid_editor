@@ -1,0 +1,78 @@
+name: Release — macOS DMG & Sparkle Feed
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version string (optional override)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-release:
+    name: Package DMG & Publish Release (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg CLI fixture dependency
+        run: brew install ffmpeg
+
+      - name: Build Editroom (Debug) & verify all 8 suites
+        run: |
+          xcodebuild \
+            -project editroom/Editroom.xcodeproj \
+            -scheme Editroom \
+            -configuration Debug \
+            -derivedDataPath /tmp/hybrid_edit_rel_check_dd \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO build
+          BIN="/tmp/hybrid_edit_rel_check_dd/Build/Products/Debug/Editroom.app/Contents/MacOS/Editroom"
+          OUT="/tmp/rel_suites_out"
+          rm -rf "$OUT" && mkdir -p "$OUT/hyb" "$OUT/ext" "$OUT/media" "$OUT/smart" "$OUT/hard"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_hyb" "$BIN" --hybrid-test "$OUT/hyb"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_ext" "$BIN" --extensions-test "$OUT/ext"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_med" "$BIN" --media-providers-test "$OUT/media"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_smt" "$BIN" --smart-editing-test "$OUT/smart"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_hrd" "$BIN" --hardening-4k-test "$OUT/hard"
+          "$BIN" --creator-v12-test
+          "$BIN" --studio-v13-test
+          "$BIN" --ecosystem-v20-test
+
+      - name: Package Release DMG & Sparkle appcast.xml
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          chmod +x scripts/package-dmg.sh
+          VERSION_ARG=""
+          if [[ -n "${{ inputs.version }}" ]]; then
+            VERSION_ARG="--version ${{ inputs.version }}"
+          fi
+          ./scripts/package-dmg.sh --out dist $VERSION_ARG
+
+      - name: Upload DMG, SHA-256 & appcast artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: editroom-macos-dmg
+          path: |
+            dist/Editroom-*.dmg
+            dist/Editroom-*.dmg.sha256
+            dist/appcast.xml
+
+      - name: Create GitHub Release on tag push
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/Editroom-*.dmg
+            dist/Editroom-*.dmg.sha256
+            dist/appcast.xml

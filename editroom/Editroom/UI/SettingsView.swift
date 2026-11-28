@@ -7,7 +7,7 @@ struct SettingsView: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case general = "General", shortcuts = "Shortcuts", magic = "Magic"
-        case skills = "Skills", plugins = "Plugins", integrations = "Integrations"
+        case skills = "Skills", plugins = "Plugins", explore = "Explore", integrations = "Integrations"
         case updates = "Updates"
         var id: Self { self }
         var symbol: String {
@@ -17,6 +17,7 @@ struct SettingsView: View {
             case .magic: "wand.and.sparkles"
             case .skills: "book.closed"
             case .plugins: "puzzlepiece.extension"
+            case .explore: "safari"
             case .integrations: "key.horizontal"
             case .updates: "arrow.down.circle"
             }
@@ -51,6 +52,7 @@ struct SettingsView: View {
                 case .magic: MagicSettings(model: model)
                 case .skills: SkillsSettingsView()
                 case .plugins: PluginsSettingsView()
+                case .explore: ExploreCatalogView()
                 case .integrations: IntegrationsSettingsView()
                 case .updates: UpdateSettings()
                 }
@@ -58,7 +60,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .id(themes.look)
-        .frame(width: 700, height: 660)
+        .frame(width: 760, height: 660)
         .background(Theme.panel)
         .navigationTitle("Settings")
         .preferredColorScheme(Theme.scheme)

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-28",
+  "entries": [
+    {
+      "id": "vietnamese-shorts-creator",
+      "name": "Vietnamese Shorts & Reels Creator",
+      "kind": "skill",
+      "category": "Vietnamese Creator",
+      "description": "Dựng Shorts/Reels/TikTok tiếng Việt trọn quy trình: A-roll VAD, phụ đề Karaoke CapCut, B-roll 3 tầng khớp beat & Auto-Ducking nhạc nền.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/editor-skills/vietnamese-shorts-creator",
+      "tags": ["vietnamese", "shorts", "reels", "karaoke", "captions", "tiếng việt"]
+    },
+    {
+      "id": "aroll-rough-cut",
+      "name": "A-Roll Rough-Cut (Vietnamese + VAD)",
+      "kind": "skill",
+      "category": "Vietnamese Creator",
+      "description": "Cắt dựng thô A-roll tiếng Việt với Whisper Metal + VAD lọc khoảng lặng, giữ câu nói tự nhiên trong 1 AgentTurn.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/editor-skills/aroll-rough-cut",
+      "tags": ["aroll", "whisper", "vad", "tiếng việt", "cắt dựng"]
+    },
+    {
+      "id": "smart-broll-inserter",
+      "name": "Smart B-Roll Inserter (3-Tier)",
+      "kind": "skill",
+      "category": "B-Roll & Stock",
+      "description": "Chèn B-roll theo thác 3 tầng: Local SQLite FTS5 -> Stock Pexels/Pixabay -> ComfyUI Colab lên V2+.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/editor-skills/smart-broll-inserter",
+      "tags": ["broll", "fts5", "stock", "comfyui", "v2"]
+    },
+    {
+      "id": "comfy-broll-generator",
+      "name": "ComfyUI B-Roll & Asset Generator",
+      "kind": "skill",
+      "category": "ComfyUI",
+      "description": "Generate custom Flux images, Wan2.1 I2V clips from timeline frames, or Stable Audio SFX via remote Colab GPU.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/editor-skills/comfy-broll-generator",
+      "tags": ["comfyui", "flux", "wan2.1", "i2v", "colab", "ai generation"]
+    },
+    {
+      "id": "stock-media-finder",
+      "name": "Free Stock Media Finder",
+      "kind": "skill",
+      "category": "B-Roll & Stock",
+      "description": "Search Pexels and Pixabay for HD/4K stock footage, inspect numbered contact sheets, and place directly on V2.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/editor-skills/stock-media-finder",
+      "tags": ["stock", "pexels", "pixabay", "video", "photo"]
+    },
+    {
+      "id": "vietnamese-cinematic-pack",
+      "name": "Vietnamese Cinematic Pack",
+      "kind": "plugin",
+      "category": "Color & LUTs",
+      "description": "Bundle Tier B gồm LUT 3D Saigon Golden Hour (.cube) dùng ngay với `list_looks`/`set_grade` và workflow ComfyUI Saigon Street Flux.",
+      "author": "hybrid_edit_vid",
+      "githubSource": "nguyenducvuongg/hybrid_editor/tree/main/assets/plugins/vietnamese-cinematic-pack",
+      "tier": "Tier B · Assets",
+      "tags": ["lut", "cube", "color grade", "saigon", "comfyui", "tiếng việt"]
+    }
+  ]
+}

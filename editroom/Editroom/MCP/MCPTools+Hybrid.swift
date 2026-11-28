@@ -171,6 +171,11 @@ extension MCPTools {
                   "sample_interval_sec": num("Analysis frame interval in seconds (0.25...2.0, default 0.5)."),
                   "include_preview": ["type": "boolean", "description": "Return a cropped JPEG contact sheet preview across 4 timestamps."]],
                  readOnly: true),
+            tool("browse_catalog", "Browse community skills and plugins",
+                 "Searches curated community skills & Tier A/B plugin packages with install status.",
+                 ["query": str("Optional Vietnamese or English keyword filter."),
+                  "kind": ["type": "string", "enum": ["skill", "plugin"], "description": "Optional entry kind filter."]],
+                 readOnly: true),
         ]
     }
 
@@ -1010,6 +1015,31 @@ extension MCPTools {
                 }
             }
             return out
+
+        case "browse_catalog":
+            let q = (args["query"] as? String) ?? ""
+            let rawKind = (args["kind"] as? String)?.lowercased()
+            let kindFilter: CatalogEntryKind? = rawKind.flatMap { CatalogEntryKind(rawValue: $0) }
+            let store = ExploreCatalogStore.shared
+            let skillIDs = Set(SkillRegistry.shared.skills.map(\.id))
+            let pluginIDs = Set(PluginHost.shared.plugins.map(\.id))
+            let matches = store.search(query: q, kind: kindFilter).map { e -> [String: Any] in
+                [
+                    "id": e.id,
+                    "name": e.name,
+                    "kind": e.kind.rawValue,
+                    "category": e.category,
+                    "tier": e.tier ?? NSNull(),
+                    "github_source": e.githubSource,
+                    "installed": e.kind == .skill ? skillIDs.contains(e.id) : pluginIDs.contains(e.id),
+                    "description": e.description,
+                ]
+            }
+            return json([
+                "count": matches.count,
+                "updated_at": store.lastUpdated,
+                "entries": matches,
+            ])
 
         default:
             return nil

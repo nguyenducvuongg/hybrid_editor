@@ -1,0 +1,45 @@
+name: CI — Build & 8 Verification Suites (macOS)
+
+on:
+  push:
+    branches: [ main, feat/editroom-core ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Offline Suites (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg CLI fixture dependency
+        run: brew install ffmpeg
+
+      - name: Build Editroom (Debug)
+        run: |
+          xcodebuild \
+            -project editroom/Editroom.xcodeproj \
+            -scheme Editroom \
+            -configuration Debug \
+            -derivedDataPath /tmp/hybrid_edit_ci_dd \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Run all 8 offline verification suites
+        run: |
+          BIN="/tmp/hybrid_edit_ci_dd/Build/Products/Debug/Editroom.app/Contents/MacOS/Editroom"
+          OUT="/tmp/ci_suites_out"
+          rm -rf "$OUT" && mkdir -p "$OUT/hyb" "$OUT/ext" "$OUT/media" "$OUT/smart" "$OUT/hard"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_hyb" "$BIN" --hybrid-test "$OUT/hyb"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_ext" "$BIN" --extensions-test "$OUT/ext"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_med" "$BIN" --media-providers-test "$OUT/media"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_smt" "$BIN" --smart-editing-test "$OUT/smart"
+          HYBRID_EDIT_DATA_DIR="$OUT/d_hrd" "$BIN" --hardening-4k-test "$OUT/hard"
+          "$BIN" --creator-v12-test
+          "$BIN" --studio-v13-test
+          "$BIN" --ecosystem-v20-test

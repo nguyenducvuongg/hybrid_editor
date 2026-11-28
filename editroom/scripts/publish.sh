@@ -10,7 +10,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP=Editroom
-REPO=robbietilton/Editroom
+REPO=nguyenducvuongg/hybrid_editor
 WORK="$HOME/Library/Caches/EditroomRelease"
 SIGN_UPDATE="$WORK/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
 

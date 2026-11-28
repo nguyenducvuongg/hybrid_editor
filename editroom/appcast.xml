@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Editroom</title>
+    <title>Hybrid Editor (Editroom)</title>
     <item>
-      <title>Version 1.1.2</title>
-      <pubDate>Sat, 28 Nov 2026 00:03:55 +0000</pubDate>
-      <sparkle:version>16</sparkle:version>
-      <sparkle:shortVersionString>1.1.2</sparkle:shortVersionString>
+      <title>Version 2.0.0</title>
+      <pubDate>Sat, 28 Nov 2026 15:00:00 +0000</pubDate>
+      <sparkle:version>20</sparkle:version>
+      <sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <link>https://github.com/robbietilton/Editroom/releases/tag/v1.1.2</link>
-      <changes><![CDATA[Magic: type @folder: to point Magic, Claude or ChatGPT at a folder in Media. Add :only to leave out the folders inside it.
-Magic: picking from the @ list now closes it.
-Viewer: small display fix when Magic starts.]]></changes>
-      <enclosure url="https://github.com/robbietilton/Editroom/releases/download/v1.1.2/Editroom.dmg" sparkle:edSignature="uhOx2XzF2HXB2rxHZ/CrDjIY04q5OmHS2Mj3bu589WpRl7HZTc/3uRlv73oH9NNaU7sQyTvded2wq44drdq7DQ==" length="12551183" type="application/octet-stream"/>
+      <link>https://github.com/nguyenducvuongg/hybrid_editor/releases/tag/v2.0.0</link>
+      <changes><![CDATA[v2.0.0 Hybrid AI Editor Release:
+- Vietnamese Creator Suite: Word-level Karaoke/CapCut captions, BGM auto-ducking, beat-sync cuts, visual B-Roll FTS5 browser.
+- Studio Engine: Apple Vision face-tracking Auto-Reframe (16:9 to 9:16/1:1/4:5), ComfyUI Workflow Gallery + live WebSocket progress.
+- Ecosystem: Settings > Explore community Skills & Plugins catalog and GitHub Actions macOS CI/CD + DMG packaging.]]></changes>
+      <enclosure url="https://github.com/nguyenducvuongg/hybrid_editor/releases/download/v2.0.0/Editroom-2.0.0.dmg" length="0" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>

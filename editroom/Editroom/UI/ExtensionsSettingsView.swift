@@ -646,3 +646,176 @@ struct IntegrationsSettingsView: View {
         }
     }
 }
+
+// MARK: - Explore Community Catalog Tab
+
+struct ExploreCatalogView: View {
+    @ObservedObject private var catalog = ExploreCatalogStore.shared
+    @ObservedObject private var skills = SkillRegistry.shared
+    @ObservedObject private var plugins = PluginHost.shared
+
+    enum FilterKind: String, CaseIterable, Identifiable {
+        case all = "All"
+        case skills = "Skills"
+        case plugins = "Plugins"
+        var id: String { rawValue }
+    }
+
+    @State private var query = ""
+    @State private var filter: FilterKind = .all
+    @State private var installingID: String?
+    @State private var statusBanner: String?
+    @State private var isError = false
+
+    private var filteredEntries: [CommunityCatalogEntry] {
+        let k: CatalogEntryKind? = switch filter {
+        case .all: nil
+        case .skills: .skill
+        case .plugins: .plugin
+        }
+        return catalog.search(query: query, kind: k)
+    }
+
+    private func isInstalled(_ entry: CommunityCatalogEntry) -> Bool {
+        switch entry.kind {
+        case .skill: return skills.skills.contains { $0.id == entry.id }
+        case .plugin: return plugins.plugins.contains { $0.id == entry.id }
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    PageTitle("Explore")
+                    Spacer()
+                    Text("Feed \(catalog.lastUpdated)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                    if catalog.isRefreshing {
+                        ProgressView().controlSize(.small).scaleEffect(0.7)
+                    } else {
+                        PillButton(title: "Refresh", prominent: false) { refreshFeed() }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        TextField("Search Vietnamese/English skills & plugins…", text: $query)
+                            .textFieldStyle(.roundedBorder)
+                        Picker("", selection: $filter) {
+                            ForEach(FilterKind.allCases) { item in
+                                Text(item.rawValue).tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 190)
+                    }
+
+                    if let statusBanner {
+                        Text(statusBanner)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(isError ? Color(hex: 0xE5735C) : Color(hex: 0x39B54A))
+                            .lineLimit(2)
+                    }
+
+                    LazyVStack(spacing: 10) {
+                        ForEach(filteredEntries) { entry in
+                            let installed = isInstalled(entry)
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text(entry.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.text)
+                                    Text(entry.kind.label)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(entry.kind == .skill ? Theme.accent : Color(hex: 0x5BA8FF))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill((entry.kind == .skill ? Theme.accent : Color(hex: 0x5BA8FF)).opacity(0.15)))
+                                    if let tier = entry.tier {
+                                        Text(tier)
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundStyle(Theme.textDim)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Capsule().fill(Theme.raised))
+                                    }
+                                    Spacer()
+                                    if installingID == entry.id {
+                                        ProgressView().controlSize(.small)
+                                    } else if installed {
+                                        Text("Installed ✓")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(Color(hex: 0x39B54A))
+                                    } else {
+                                        PillButton(title: "Install", prominent: true) { install(entry) }
+                                    }
+                                }
+                                Text(entry.description)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Theme.textDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                HStack(spacing: 8) {
+                                    Text("\(entry.category) · by \(entry.author)")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Theme.textFaint)
+                                    Spacer()
+                                    Text(entry.githubSource)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(Theme.textFaint)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.stroke))
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+        }
+    }
+
+    private func refreshFeed() {
+        statusBanner = nil
+        isError = false
+        Task {
+            do {
+                try await catalog.refresh()
+                statusBanner = "Updated community catalog (\(catalog.entries.count) entries)."
+            } catch {
+                isError = true
+                statusBanner = SecretRedactor.redact(error.localizedDescription)
+            }
+        }
+    }
+
+    private func install(_ entry: CommunityCatalogEntry) {
+        installingID = entry.id
+        statusBanner = nil
+        isError = false
+        Task {
+            do {
+                switch entry.kind {
+                case .skill:
+                    let meta = try await skills.installFromGitHub(entry.githubSource)
+                    statusBanner = "Installed skill /\(meta.id)."
+                case .plugin:
+                    let p = try await plugins.installFromGitHub(entry.githubSource)
+                    statusBanner = p.trustedForExecution
+                        ? "Installed plugin \(p.manifest.name)."
+                        : "Installed \(p.manifest.name) (enable in Plugins tab after review)."
+                }
+            } catch {
+                isError = true
+                statusBanner = SecretRedactor.redact(error.localizedDescription)
+            }
+            installingID = nil
+        }
+    }
+}
