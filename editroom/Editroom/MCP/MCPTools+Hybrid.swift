@@ -17,6 +17,7 @@ extension MCPTools {
         "set_transform", "set_title_style", "freeze_frame", "reverse_clip",
         "detach_audio", "duplicate_clip", "set_track", "add_solid", "set_solid_color",
         "apply_edl_patch", "comfy_generate", "import_stock_media", "insert_broll_overlay",
+        "generate_vietnamese_captions", "auto_duck_bgm", "beat_sync_cuts",
     ]
 
     static var hybridDefinitions: [[String: Any]] {
@@ -135,6 +136,33 @@ extension MCPTools {
                   "duration": num("Overlay duration in seconds."),
                   "mute_audio": ["type": "boolean", "description": "Mute B-roll audio track (default true)."],
                   "track": str("Optional target video track name (defaults to free V2+)."),
+                  "session_id": str("Optional held lease session_id.")]),
+            tool("generate_vietnamese_captions", "Generate Vietnamese word-level captions",
+                 "Generates or updates animated word-level Vietnamese captions with CapCut/Karaoke presets inside an AgentTurn (`I1`, `I3`).",
+                 ["clip_ids": ["type": "array", "items": ["type": "string"], "description": "Target video/audio clip UUIDs (defaults to speaking clips)."],
+                  "preset": ["type": "string", "enum": CaptionPreset.allCases.map(\.rawValue), "description": "Caption preset (capcut_yellow, karaoke_pill, neon_box, minimal_clean, classic)."],
+                  "language": str("Transcript language code (default vi)."),
+                  "max_words": ["type": "integer", "description": "Max words per caption block (1...8, overrides preset)."],
+                  "size": num("Optional text size override (28...140)."),
+                  "position": num("Optional vertical Y fraction (0.1...0.95)."),
+                  "words": ["type": "array", "description": "Optional explicit [{start, end, text}] word array in file seconds.", "items": ["type": "object"]],
+                  "session_id": str("Optional held lease session_id.")]),
+            tool("auto_duck_bgm", "Auto-duck BGM under speech",
+                 "Automatically lowers background music volume under detected speech spans using smooth 50ms gain ramps inside an AgentTurn (`I1`).",
+                 ["bgm_track": str("Music audio track (e.g. A2; auto-selected if omitted)."),
+                  "voice_track": str("Dialogue/speech track (e.g. A1; auto-selected if omitted)."),
+                  "duck_db": num("Ducking attenuation in dB (-36...-1, default -14)."),
+                  "disable": ["type": "boolean", "description": "Set true to disable ducking on bgm_track."],
+                  "session_id": str("Optional held lease session_id.")]),
+            tool("beat_sync_cuts", "Align cuts to music beats",
+                 "Aligns B-roll/photo clip start & cut points onto detected beats from MediaAnalyzer.music (or explicit BPM) inside an AgentTurn (`I1`).",
+                 ["clip_ids": ["type": "array", "items": ["type": "string"], "description": "Visual clips to beat-align (defaults to unlocked clips on `track` or V1)."],
+                  "track": str("Track name when clip_ids omitted (e.g. V1, V2)."),
+                  "music_clip_id": str("Optional audio clip UUID to analyze beats from."),
+                  "music_asset_id": str("Optional audio asset UUID when music isn't on timeline."),
+                  "beats_per_cut": ["type": "integer", "description": "Beats held per clip (1...16, default 2)."],
+                  "bpm": num("Optional explicit BPM (40...240) to synthesize a strict beat grid."),
+                  "start_time": num("Optional timeline anchor time in seconds."),
                   "session_id": str("Optional held lease session_id.")]),
         ]
     }
@@ -553,6 +581,9 @@ extension MCPTools {
                 minSilenceSec: minSilence,
                 padSec: padSec
             )
+            if !transcript.isEmpty {
+                Transcripts.shared.storeTranscript(transcript, for: resolvedURL)
+            }
             return json([
                 "provider": providerName,
                 "language": transcript.language,
@@ -683,6 +714,243 @@ extension MCPTools {
                 "mute_audio": (args["mute_audio"] as? Bool) ?? true,
                 "revision": Int(model.revision),
                 "duration_total": round(after.duration * 1000) / 1000,
+            ])
+
+        case "generate_vietnamese_captions":
+            let p0 = draft?.project ?? model.project
+            let rawGiven = args["clip_ids"] as? [String] ?? []
+            let given = Set(rawGiven.compactMap(UUID.init(uuidString:)))
+            if !rawGiven.isEmpty, given.isEmpty {
+                throw MCPToolError("clip_ids must contain valid clip UUIDs from get_project.")
+            }
+            var targets = p0.unlocked(given.isEmpty ? p0.defaultCaptionTargets : p0.captionTargets(given))
+            if targets.isEmpty, given.isEmpty, let a1 = p0.audioTracks.first(where: { !$0.locked }) {
+                targets = Set(p0.clips.filter { $0.trackID == a1.id && $0.kind == .audio && $0.playsSource }.map(\.id))
+            }
+            guard !targets.isEmpty else {
+                throw MCPToolError("No unlocked speaking clips found to caption. Pass clip_ids or add an A-roll clip.")
+            }
+
+            let lang = ((args["language"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "vi"
+            var preset: CaptionPreset? = nil
+            if let rawPreset = args["preset"] as? String {
+                guard let resolved = CaptionPreset.from(rawPreset) else {
+                    throw MCPToolError("Unknown caption preset '\(rawPreset)'.")
+                }
+                preset = resolved
+            }
+
+            // Optional explicit word-level timing payload (or cached/transcribed speech).
+            let rawWords = args["words"] as? [[String: Any]]
+            var explicitTranscript: Transcript? = nil
+            if let rawWords {
+                var parsedWords: [Transcript.Word] = []
+                for item in rawWords {
+                    guard let txt = (item["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !txt.isEmpty,
+                          let wStart = double(item["start"]), let wEnd = double(item["end"]), wEnd > wStart else { continue }
+                    parsedWords.append(Transcript.Word(start: wStart, end: wEnd, text: txt))
+                }
+                guard !parsedWords.isEmpty else {
+                    throw MCPToolError("words array contained no valid {start, end, text} items.")
+                }
+                explicitTranscript = Transcript(words: parsedWords.sorted { $0.start < $1.start }, language: lang)
+            }
+
+            let targetAssetIDs = Array(Set(p0.clips.filter { targets.contains($0.id) }.compactMap(\.assetID)))
+            let prefs = SpeechPrefs.load()
+            let whisper = WhisperCPPProvider.fromPrefs(prefs)
+            for assetID in targetAssetIDs {
+                guard let asset = p0.asset(assetID) else { continue }
+                let fileURL = model.media.soundURL(assetID) ?? URL(fileURLWithPath: asset.path)
+                if let explicitTranscript {
+                    Transcripts.shared.storeTranscript(explicitTranscript, for: fileURL)
+                    continue
+                }
+                if Transcripts.shared.transcript(for: fileURL) == nil {
+                    let vad = try? await AudioVAD.analyze(url: fileURL, thresholdDB: prefs.vadThresholdDB)
+                    if let vad, !vad.spans.isEmpty {
+                        if prefs.preferWhisper, whisper.isConfigured,
+                           let wt = try? await whisper.transcribe(audioURL: fileURL, language: lang), !wt.isEmpty {
+                            Transcripts.shared.storeTranscript(wt, for: fileURL)
+                        } else if let apple = await Transcripts.shared.ready(fileURL, limit: 60) {
+                            let filtered = apple.words.filter { w in
+                                !AudioVAD.isHallucination(w.text)
+                                    && vad.spans.contains { $0.end >= w.start - 0.25 && $0.start <= w.end + 0.25 }
+                            }
+                            if !filtered.isEmpty {
+                                Transcripts.shared.storeTranscript(Transcript(words: filtered, language: apple.language), for: fileURL)
+                            }
+                        }
+                    }
+                }
+            }
+
+            let maxWordsOverride = (args["max_words"] as? Int).map { max(1, min(8, $0)) }
+            let sizeOverride = double(args["size"]).map { min(CaptionStyle.sizeRange.upperBound, max(CaptionStyle.sizeRange.lowerBound, $0)) }
+            let posOverride = double(args["position"]).map { min(0.95, max(0.1, $0)) }
+
+            try await perform([.change(targets.first, "Vietnamese Captions") { proj in
+                proj.addCaptions(targets)
+                if let preset { proj.captions?.style.apply(preset: preset) }
+                if let maxWordsOverride { proj.captions?.style.maxWordsPerLine = maxWordsOverride }
+                if let sizeOverride { proj.captions?.style.size = sizeOverride }
+                if let posOverride { proj.captions?.style.y = posOverride }
+            }], model, who, draft)
+
+            let after = draft?.project ?? model.project
+            let blocks = CaptionLayout.blocks(after) { model.media.transcript($0.id) }
+            let totalWords = blocks.reduce(0) { $0 + $1.words.count }
+            return json([
+                "preset": (preset ?? .classic).rawValue,
+                "language": lang,
+                "clip_ids": after.captionedClips.map(\.id.uuidString),
+                "block_count": blocks.count,
+                "word_count": totalWords,
+                "max_words": after.captions?.style.maxWordsPerLine ?? 0,
+                "pill_highlight": after.captions?.style.pillHighlight ?? false,
+                "blocks": blocks.prefix(60).map { ["start": round3($0.start), "end": round3($0.end), "text": $0.text, "words": $0.words.count] },
+                "revision": Int(model.revision),
+            ])
+
+        case "auto_duck_bgm":
+            let p0 = draft?.project ?? model.project
+            guard p0.audioTracks.count >= 2 else {
+                throw MCPToolError("auto_duck_bgm requires at least 2 audio tracks (e.g. A1 dialogue + A2 BGM).")
+            }
+
+            let linkedTrackIDs = Set(p0.clips.filter { $0.kind == .audio && $0.linkID != nil }.map(\.trackID))
+            let voiceTrackID: UUID
+            if let vn = args["voice_track"] as? String, !vn.isEmpty {
+                voiceTrackID = try trackArg(vn, p0, kind: .audio)
+            } else if let candidate = p0.audioTracks.first(where: { linkedTrackIDs.contains($0.id) && !$0.muted }) ?? p0.audioTracks.first(where: { !$0.muted }) {
+                voiceTrackID = candidate.id
+            } else {
+                voiceTrackID = p0.audioTracks[0].id
+            }
+
+            let bgmTrackID: UUID
+            if let bn = args["bgm_track"] as? String, !bn.isEmpty {
+                bgmTrackID = try trackArg(bn, p0, kind: .audio)
+            } else if let candidate = p0.audioTracks.first(where: { t in
+                t.id != voiceTrackID && !t.locked && p0.clips.contains { $0.trackID == t.id && $0.kind == .audio && $0.linkID == nil }
+            }) ?? p0.audioTracks.first(where: { $0.id != voiceTrackID && !$0.locked }) {
+                bgmTrackID = candidate.id
+            } else {
+                throw MCPToolError("No unlocked BGM track found distinct from voice track.")
+            }
+
+            guard bgmTrackID != voiceTrackID else {
+                throw MCPToolError("bgm_track and voice_track must be distinct audio tracks.")
+            }
+
+            let disable = (args["disable"] as? Bool) ?? false
+            let duckDB = min(-1.0, max(-36.0, double(args["duck_db"]) ?? -14.0))
+
+            await model.media.ensureWaveforms(for: p0, trackID: voiceTrackID)
+            let spans = AudioLevels.activity(on: voiceTrackID, project: p0, media: model.media)
+
+            try await perform([.change(nil, disable ? "Disable BGM Ducking" : "Auto-Duck BGM") { proj in
+                proj.updateTrack(bgmTrackID) { t in
+                    t.duckUnder = disable ? nil : voiceTrackID
+                    if !disable { t.duckDB = duckDB }
+                }
+            }], model, who, draft)
+
+            let after = draft?.project ?? model.project
+            return json([
+                "bgm_track": trackName(bgmTrackID, after),
+                "voice_track": trackName(voiceTrackID, after),
+                "enabled": !disable,
+                "duck_db": round3(duckDB),
+                "speech_spans_count": spans.count,
+                "speech_spans": spans.prefix(40).map { ["start": round3($0.start), "end": round3($0.end)] },
+                "revision": Int(model.revision),
+            ])
+
+        case "beat_sync_cuts":
+            let p0 = draft?.project ?? model.project
+            let rawClipIDs = args["clip_ids"] as? [String] ?? []
+            let targetClipIDs: [UUID]
+            if !rawClipIDs.isEmpty {
+                let parsed = try rawClipIDs.map { s -> UUID in
+                    guard let id = UUID(uuidString: s), let clip = p0.clip(id) else {
+                        throw MCPToolError("No clip with id \(s).")
+                    }
+                    guard !p0.isLocked(clip.trackID) else { throw MCPToolError("Clip \(s) is on a locked track.") }
+                    guard clip.kind != .audio else { throw MCPToolError("clip_ids for beat_sync_cuts must be visual clips.") }
+                    return id
+                }
+                targetClipIDs = parsed
+            } else {
+                let trackID = try trackArg((args["track"] as? String) ?? "V1", p0, kind: .video)
+                targetClipIDs = p0.clips
+                    .filter { $0.trackID == trackID && $0.kind != .audio }
+                    .sorted { $0.start < $1.start }
+                    .map(\.id)
+            }
+            guard !targetClipIDs.isEmpty else {
+                throw MCPToolError("No visual clips found on target track to align with beats.")
+            }
+
+            var musicURL: URL? = nil
+            var musicStart = 0.0
+            var musicSourceStart = 0.0
+            if let mClipStr = args["music_clip_id"] as? String, !mClipStr.isEmpty {
+                guard let mUUID = UUID(uuidString: mClipStr),
+                      let mClip = p0.clip(mUUID), mClip.kind == .audio,
+                      let aid = mClip.assetID, let asset = p0.asset(aid) else {
+                    throw MCPToolError("Invalid music_clip_id '\(mClipStr)'.")
+                }
+                musicURL = URL(fileURLWithPath: asset.path)
+                musicStart = mClip.start
+                musicSourceStart = mClip.sourceStart
+            } else if let mAssetStr = args["music_asset_id"] as? String, !mAssetStr.isEmpty {
+                guard let aUUID = UUID(uuidString: mAssetStr), let asset = p0.asset(aUUID) else {
+                    throw MCPToolError("Invalid music_asset_id '\(mAssetStr)'.")
+                }
+                musicURL = URL(fileURLWithPath: asset.path)
+            } else if let mClip = p0.clips.first(where: { $0.kind == .audio && $0.linkID == nil }) ?? p0.clips.first(where: { $0.kind == .audio }),
+                      let asset = p0.asset(mClip.assetID) {
+                musicURL = URL(fileURLWithPath: asset.path)
+                musicStart = mClip.start
+                musicSourceStart = mClip.sourceStart
+            }
+
+            let explicitBPM = double(args["bpm"])
+            let maxSpan = max(30.0, targetClipIDs.compactMap { p0.clip($0)?.end }.max() ?? 30.0)
+            guard let grid = await BeatSyncEngine.computeBeatGrid(
+                musicURL: musicURL,
+                musicTimelineStart: musicStart,
+                musicSourceStart: musicSourceStart,
+                maxDuration: maxSpan + 20.0,
+                explicitBPM: explicitBPM
+            ) else {
+                throw BeatSyncError.noMusic("Could not detect musical beats. Import a longer music track (>6s) or specify explicit `bpm`.")
+            }
+
+            let beatsPerCut = max(1, min(16, (args["beats_per_cut"] as? Int) ?? 2))
+            let startAnchor = double(args["start_time"])
+            let placements = try BeatSyncEngine.planBeatCuts(
+                clipIDs: targetClipIDs,
+                project: p0,
+                grid: grid,
+                beatsPerCut: beatsPerCut,
+                startAt: startAnchor
+            )
+
+            try await perform([.change(nil, "Beat-Sync Cuts") { proj in
+                BeatSyncEngine.apply(placements, to: &proj)
+            }], model, who, draft)
+
+            let after = draft?.project ?? model.project
+            return json([
+                "bpm": round3(grid.bpm),
+                "beat_source": grid.source,
+                "beats_per_cut": beatsPerCut,
+                "cut_points": placements.map { round3($0.start) },
+                "updated_clip_ids": placements.map(\.clipID.uuidString),
+                "clips": clipsJSON(placements.map(\.clipID), after),
+                "revision": Int(model.revision),
             ])
 
         default:

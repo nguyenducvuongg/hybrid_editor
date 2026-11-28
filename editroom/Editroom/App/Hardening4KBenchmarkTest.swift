@@ -977,9 +977,10 @@ enum Hardening4KBenchmarkTest {
             let seededFirst = reg.seedBuiltInSkills()
             let seededSecond = reg.seedBuiltInSkills()
             let ids = Set(reg.skills.map(\.id))
-            guard seededFirst == 4,
+            let expectedIDs = Set(SkillRegistry.builtInSkillSpecs.map(\.id))
+            guard seededFirst == expectedIDs.count,
                   seededSecond == 0,
-                  ids == Set(["aroll-rough-cut", "smart-broll-inserter", "comfy-broll-generator", "stock-media-finder"]),
+                  ids == expectedIDs,
                   reg.skills.allSatisfy({ if case .builtIn = $0.source { return true }; return false }) else {
                 return fail("V5", "seedBuiltInSkills mismatch: first=\(seededFirst), second=\(seededSecond), ids=\(ids)")
             }
@@ -988,7 +989,7 @@ enum Hardening4KBenchmarkTest {
             let host = NSHostingView(rootView: stockView)
             host.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
             host.layoutSubtreeIfNeeded()
-            log("PASS [V5] 4 built-in skills auto-seeded (.builtIn) + StockLibraryView smoke verified")
+            log("PASS [V5] \(expectedIDs.count) built-in skills auto-seeded (.builtIn) + StockLibraryView smoke verified")
         }
 
         log("ALL 11 HARDENING, V1.1 AUDIT FIX & 4K E2E CHECKS PASSED")

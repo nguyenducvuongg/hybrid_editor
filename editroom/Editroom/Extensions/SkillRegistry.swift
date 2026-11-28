@@ -370,6 +370,19 @@ final class SkillRegistry: ObservableObject {
         2. Call `search_stock_media` with `include_thumbnails: true` to inspect candidates visually.
         3. Call `import_stock_media(stock_id: ...)` and place muted on `V2`+ with `insert_broll_overlay`, then verify via `preview_timeline_strip`.
         """),
+        ("vietnamese-shorts-creator", """
+        ---
+        name: vietnamese-shorts-creator
+        description: Dựng video Reels/Shorts/TikTok tiếng Việt trọn quy trình: cắt thô A-roll VAD, phụ đề karaoke từng từ CapCut, chèn B-roll 3 tầng theo nhịp beat, và auto-ducking nhạc nền trong 1 AgentTurn.
+        ---
+
+        # Vietnamese Shorts & Reels Creator
+        1. Cài khung `1080x1920` (`set_sequence`), kiểm tra `get_project`.
+        2. Cắt thô A-roll bằng `transcribe_aroll(language: "vi")` -> `apply_edl_patch(keep_ranges)`.
+        3. Bật phụ đề karaoke từng từ bằng `generate_vietnamese_captions(preset: "karaoke_pill", max_words: 4)`.
+        4. Chèn B-roll `V2`+ (`search_broll` -> `search_stock_media` -> `comfy_generate` -> `insert_broll_overlay`) và khớp nhịp nhạc `beat_sync_cuts`.
+        5. Gọi `auto_duck_bgm(duck_db: -14)` hạ nhạc nền mượt dưới giọng nói và xác minh qua `preview_timeline_strip`.
+        """),
     ]
 
     /// Seeds the 4 built-in editor workflow skills idempotently into `baseDir`.

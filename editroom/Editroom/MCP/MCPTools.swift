@@ -840,7 +840,9 @@ enum MCPTools {
         let tracks = p.videoTracks.enumerated().reversed().map { i, t in
             ["name": "V\(i + 1)", "kind": "video", "hidden": t.hidden, "locked": t.locked] as [String: Any]
         } + p.audioTracks.enumerated().map { i, t in
-            ["name": "A\(i + 1)", "kind": "audio", "muted": t.muted, "solo": t.solo, "locked": t.locked, "gain_db": t.gainDB] as [String: Any]
+            var row: [String: Any] = ["name": "A\(i + 1)", "kind": "audio", "muted": t.muted, "solo": t.solo, "locked": t.locked, "gain_db": t.gainDB, "duck_db": round3(t.duckDB)]
+            if let duckID = t.duckUnder { row["duck_under"] = trackName(duckID, p) }
+            return row
         }
         let clips = p.clips.sorted {
             (trackName($0.trackID, p), $0.start) < (trackName($1.trackID, p), $1.start)
@@ -865,6 +867,8 @@ enum MCPTools {
         guard let track = p.captions else { return NSNull() }
         let blocks = CaptionLayout.blocks(p) { model.media.transcript($0.id) }
         return ["hidden": track.hidden, "size": track.style.size, "position": track.style.y, "highlight": track.style.highlight,
+                "pill_highlight": track.style.pillHighlight, "uppercase": track.style.uppercase,
+                "max_words": track.style.maxWordsPerLine, "active_scale": round3(track.style.activeScale),
                 "clip_ids": p.captionedClips.map(\.id.uuidString),
                 "count": blocks.count,
                 "captions": blocks.prefix(60).map { ["start": round3($0.start), "end": round3($0.end), "text": $0.text] }] as [String: Any]

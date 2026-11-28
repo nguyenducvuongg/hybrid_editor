@@ -272,3 +272,22 @@
 | `--hardening-4k-test` | `H1–H6` + **`V1–V5`** (in-app tool filter & `import_media` draft, OpenAI/Gemini multimodal loopback & sanitizer, cancel rollback, ComfyUI checkpoint auto-bind, 4 built-in skills + Stock UI) | **11/11 PASSED** (`rounds=497 ms`, `export_4k_hevc=2.23 s`, `rss=212.8 MB`) |
 | `--smart-editing-test` + `--media-providers-test` + `--extensions-test` + `--hybrid-test` | Hồi quy toàn bộ M1-E → M5-E | **6/6 + 6/6 + 7/7 + 7/7 PASSED** (tổng **37/37 PASSED**) |
 | `graphify update .` | Cập nhật AST Knowledge Graph cho `v1.1` | **4,576 nodes, 12,530 edges, 218 communities** |
+
+---
+
+## 13. Phase B (`v1.2`) — Bộ tính năng Creator Tiếng Việt (`2026-11-28`)
+
+### Tính năng cốt lõi đã triển khai (`specs/009-v12-vietnamese-creator-suite/`)
+- **Phụ đề Karaoke Tiếng Việt theo từng từ (`CapCut` / `Karaoke Pill`):**
+  - [Captions.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Model/Captions.swift), [CaptionRenderer.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Engine/CaptionRenderer.swift), [Transcripts.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Engine/Transcripts.swift), [InspectorView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/InspectorView.swift): bổ sung 5 preset (`classic`, `capcut_yellow`, `karaoke_pill`, `neon_box`, `minimal_clean`), `pillHighlight` (`NSLayoutManager` đo khung glyph bo tròn từng chữ), `activeScale` phóng chữ đang đọc (`1.0...1.25`), `uppercase` theo locale `vi_VN`, giới hạn `maxWordsPerLine` (`Auto, 2–6`), cùng MCP tool `generate_vietnamese_captions` chạy đồng bộ Preview/Export (`I3`, `P2`).
+- **Auto-Ducking Nhạc Nền & Beat-Sync Rough Cut:**
+  - [BeatSyncEngine.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Engine/BeatSyncEngine.swift), [MediaStore.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Engine/MediaStore.swift), [EditorModel.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Model/EditorModel.swift), [EditroomApp.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/EditroomApp.swift), [MCPTools+Hybrid.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/MCPTools+Hybrid.swift): thêm `auto_duck_bgm` (nạp sẵn waveform track thoại, gán `duckUnder`/`duckDB` qua ramp 50ms trong `CompositionBuilder` và hoàn tác 1 bước `Cmd+Z`), `Clip > Auto-Duck BGM Under Speech`, và `beat_sync_cuts` tận dụng `MediaAnalyzer.music` khớp điểm cắt B-roll/ảnh vào nhịp beat trong 1 `AgentTurn`.
+- **Trình duyệt B-Roll trực quan & Skill Shorts Tiếng Việt:**
+  - [BRollBrowserView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/BRollBrowserView.swift), [LibraryView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/LibraryView.swift), [BRollIndex.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/BRoll/BRollIndex.swift), [vietnamese-shorts-creator](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/editor-skills/vietnamese-shorts-creator/SKILL.md): chuyển `LibraryView` sang 3 tab (`Media | B-Roll | Stock`), hiển thị thống kê SQLite FTS5, thumbnail keyframe bất đồng bộ, tìm kiếm tiếng Việt có/không dấu và nút **Add V2** 1 chạm tại playhead; nạp thêm built-in skill thứ 5 `vietnamese-shorts-creator`.
+
+### Kiểm chứng thực nghiệm sau lần sửa cuối (`M4 Pro`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `--creator-v12-test` ([CreatorFeaturesTest.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/CreatorFeaturesTest.swift)) | `C1–C6`: Karaoke pill & export MP4 parity (`diff=12,770,567`, `exportDiff=2,300,392`), `generate_vietnamese_captions` + Undo/Redo, `auto_duck_bgm` qua `AVAssetReaderAudioMixOutput` (`rmsSilence/rmsSpeech = 7.9x`), `beat_sync_cuts` & `MediaAnalyzer.music` (`119.8 BPM`), `BRollBrowserView` + 1-click `V2`, skill `vietnamese-shorts-creator` & `get_project` `duck_under` | **6/6 PASSED** (`ALL 6 CREATOR V1.2 CHECKS PASSED`, `exit 0`) |
+| `--hardening-4k-test` | `H1–H6` + `V1–V5` (`tools=64`, `bytes=42,688`, `5 built-in skills`) | **11/11 PASSED** (`rounds=474 ms`, `export_4k_hevc=2.17 s`, `rss=295.6 MB`) |
+| `--smart-editing-test` + `--media-providers-test` + `--extensions-test` + `--hybrid-test` | Hồi quy toàn bộ M1-E → M6-E + `v1.1` | **6/6 + 6/6 + 7/7 + 7/7 PASSED** (**43/43 checks across 6 suites**) |

@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Updates.shared.start() }
-        let testFlags = ["--hybrid-test", "--extensions-test", "--media-providers-test", "--smart-editing-test", "--hardening-4k-test", "--selftest"]
+        let testFlags = ["--hybrid-test", "--extensions-test", "--media-providers-test", "--smart-editing-test", "--hardening-4k-test", "--creator-v12-test", "--selftest"]
         if !testFlags.contains(where: { CommandLine.arguments.contains($0) }) {
             Task { @MainActor in
                 _ = SkillRegistry.shared.seedBuiltInSkills(force: false)
@@ -225,6 +225,7 @@ struct EditroomApp: App {
         MediaProvidersTest.runIfRequested()
         SmartEditingTest.runIfRequested()
         Hardening4KBenchmarkTest.runIfRequested()
+        CreatorFeaturesTest.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }
@@ -291,6 +292,8 @@ struct EditroomApp: App {
                 Button("Add Dissolve") { model.addTransitionAtPlayhead() }.keyboardShortcut(keys.menu(.addDissolve))
                     .disabled(!model.canAddDissolve)
                 Button("Even Out Audio Levels") { model.evenOutLevels() }
+                Button("Auto-Duck BGM Under Speech") { model.autoDuckBGM() }
+                    .disabled(model.project.audioTracks.count < 2)
                 Button("Detach Audio") { model.detachAudio() }.keyboardShortcut(keys.menu(.detachAudio))
                     .disabled(!model.selectionIsLinked)
                 Button("Duplicate") { model.duplicateSelection() }.keyboardShortcut(keys.menu(.duplicate))

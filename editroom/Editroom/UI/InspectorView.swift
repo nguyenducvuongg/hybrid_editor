@@ -109,6 +109,13 @@ struct InspectorView: View {
                 }
             }
             InspectorSection("Style") {
+                MenuField(label: "Apply Preset…") {
+                    ForEach(CaptionPreset.allCases) { preset in
+                        Button(preset.label) {
+                            model.setCaptionStyle { $0.apply(preset: preset) }
+                        }
+                    }
+                }
                 ParamRow(icon: .symbol("textformat.size"), label: "Size", value: track.style.size, range: CaptionStyle.sizeRange,
                          format: { "\(Int($0.rounded()))" },
                          onEditing: { if !$0 { model.commitLive() } },
@@ -117,11 +124,38 @@ struct InspectorView: View {
                          format: { "\(Int($0.rounded()))%" },
                          onEditing: { if !$0 { model.commitLive() } },
                          onChange: { v in model.setCaptionStyle(live: true) { $0.y = (v / 100 * 1000).rounded() / 1000 } })
+                ParamRow(icon: .symbol("arrow.up.left.and.arrow.down.right"), label: "Word pop",
+                         value: track.style.activeScale * 100, range: 100...125,
+                         format: { "\(Int($0.rounded()))%" },
+                         onEditing: { if !$0 { model.commitLive() } },
+                         onChange: { v in model.setCaptionStyle(live: true) { $0.activeScale = (v / 100 * 100).rounded() / 100 } })
                 captionColorRow("Text", icon: "textformat", on: nil, color: track.style.textColor) { s, c in s.textColor = c }
                 captionColorRow("Word highlight", icon: "highlighter", on: track.style.highlight, color: track.style.highlightColor,
                                 toggle: { $0.highlight.toggle() }) { s, c in s.highlightColor = c }
+                captionColorRow("Word pill", icon: "rectangle.roundedtop", on: track.style.pillHighlight, color: track.style.pillColor,
+                                toggle: { $0.pillHighlight.toggle() }) { s, c in s.pillColor = c }
                 captionColorRow("Outline", icon: "a.square", on: track.style.outline, color: track.style.outlineColor,
                                 toggle: { $0.outline.toggle() }) { s, c in s.outlineColor = c }
+                HStack(spacing: 8) {
+                    RowIconView(icon: .symbol("textformat.abc"))
+                        .foregroundStyle(Theme.textDim)
+                        .frame(width: 18)
+                    Toggle("Uppercase", isOn: Binding(
+                        get: { track.style.uppercase },
+                        set: { val in model.setCaptionStyle { $0.uppercase = val } }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.text)
+                    Spacer()
+                    MenuField(label: track.style.maxWordsPerLine > 0 ? "\(track.style.maxWordsPerLine) w/line" : "Auto words") {
+                        Button("Auto") { model.setCaptionStyle { $0.maxWordsPerLine = 0 } }
+                        ForEach([2, 3, 4, 5, 6], id: \.self) { count in
+                            Button("\(count) words") { model.setCaptionStyle { $0.maxWordsPerLine = count } }
+                        }
+                    }
+                    .frame(width: 104)
+                }
                 if model.captionsWaiting {
                     Text("Listening for what's said in the captioned clips…")
                         .font(.system(size: 10.5))

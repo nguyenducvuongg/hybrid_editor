@@ -73,38 +73,60 @@ enum CaptionRenderer {
         return drawn.transformed(by: CGAffineTransform(translationX: ((output.width - e.width) / 2).rounded(), y: y.rounded()))
     }
 
-    /// Heavy words in the text colour, with an outline if it has one, the lit one in the highlight colour.
+    /// Heavy words in the text colour, with an outline or active karaoke pill if enabled, the lit one highlighted.
     private static func draw(words: [String], lit: Int?, style: CaptionStyle, output: CGSize) -> CIImage? {
         let pt = CGFloat(style.size) * min(output.width, output.height) / 1080
+        let activeScale = CGFloat(min(CaptionStyle.scaleRange.upperBound, max(CaptionStyle.scaleRange.lowerBound, style.activeScale)))
         let ns = { (c: RGBA) in NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: c.a) }
-        let font = NSFont.systemFont(ofSize: pt, weight: .heavy)
+        let baseFont = NSFont.systemFont(ofSize: pt, weight: .heavy)
+        let litFont = activeScale > 1.001 ? NSFont.systemFont(ofSize: pt * activeScale, weight: .black) : baseFont
+        let viLocale = Locale(identifier: "vi_VN")
+        let renderedWords = style.uppercase ? words.map { $0.uppercased(with: viLocale) } : words
         let para = NSMutableParagraphStyle()
         para.alignment = .center
         para.lineBreakMode = .byWordWrapping
+
+        var litRange: NSRange?
         func text(fill: Bool) -> NSAttributedString {
             let s = NSMutableAttributedString()
-            for (i, w) in words.enumerated() {
-                // A little wider than a plain space: the outline eats into the gap.
-                if i > 0 { s.append(NSAttributedString(string: " ", attributes: [.font: font, .kern: pt * 0.06])) }
-                var attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: para]
+            for (i, w) in renderedWords.enumerated() {
+                // A little wider than a plain space: the outline and active pill need breathing room.
+                if i > 0 {
+                    let spaceKern = style.pillHighlight ? pt * 0.14 : pt * 0.06
+                    s.append(NSAttributedString(string: " ", attributes: [.font: baseFont, .kern: spaceKern]))
+                }
+                let isLit = (i == lit)
+                let wordFont = isLit ? litFont : baseFont
+                var attrs: [NSAttributedString.Key: Any] = [.font: wordFont, .paragraphStyle: para]
                 if fill {
-                    attrs[.foregroundColor] = ns(i == lit ? style.highlightColor : style.textColor)
+                    attrs[.foregroundColor] = ns(isLit ? style.highlightColor : style.textColor)
+                } else if style.pillHighlight && isLit {
+                    // Keep glyph metrics matching `fill` without drawing heavy outline inside the pill.
+                    attrs[.foregroundColor] = NSColor.clear
                 } else {
                     attrs[.foregroundColor] = ns(style.outlineColor)
                     attrs[.strokeColor] = ns(style.outlineColor)
                     attrs[.strokeWidth] = 22.0
                 }
-                s.append(NSAttributedString(string: w, attributes: attrs))
+                let loc = s.length
+                let part = NSAttributedString(string: w, attributes: attrs)
+                s.append(part)
+                if fill && isLit {
+                    litRange = NSRange(location: loc, length: s.length - loc)
+                }
             }
             s.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: s.length))
             return s
         }
         let fill = text(fill: true), outline = text(fill: false)
         let opts: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
-        let bounds = fill.boundingRect(with: CGSize(width: output.width * 0.86, height: .greatestFiniteMagnitude), options: opts)
-        let pad = ceil(pt * 0.3)
-        let tw = ceil(bounds.width), th = ceil(bounds.height)
-        let w = Int(tw + pad * 2), h = Int(th + pad * 2)
+        let maxLayoutWidth = output.width * 0.86
+        let bounds = fill.boundingRect(with: CGSize(width: maxLayoutWidth, height: .greatestFiniteMagnitude), options: opts)
+        let padX = ceil(pt * 0.42)
+        let padY = ceil(pt * 0.48)
+        let tw = ceil(max(bounds.width, 1))
+        let th = ceil(max(bounds.height, 1))
+        let w = Int(tw + padX * 2), h = Int(th + padY * 2)
         guard w > 0, h > 0, w < 16384, h < 16384,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -114,7 +136,31 @@ enum CaptionRenderer {
         let g = NSGraphicsContext(cgContext: ctx, flipped: false)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = g
-        let r = CGRect(x: pad, y: pad, width: tw, height: th)
+        let r = CGRect(x: padX, y: padY, width: tw, height: th)
+
+        if style.pillHighlight, let litRange, litRange.length > 0 {
+            let storage = NSTextStorage(attributedString: fill)
+            let lm = NSLayoutManager()
+            let tc = NSTextContainer(size: CGSize(width: tw, height: th + padY))
+            tc.lineFragmentPadding = 0
+            lm.addTextContainer(tc)
+            storage.addLayoutManager(lm)
+            lm.ensureLayout(for: tc)
+            let glyphRange = lm.glyphRange(forCharacterRange: litRange, actualCharacterRange: nil)
+            if glyphRange.length > 0 {
+                let glyphRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+                let flippedY = padY + th - glyphRect.maxY
+                let pillRect = CGRect(x: padX + glyphRect.minX, y: flippedY, width: glyphRect.width, height: glyphRect.height)
+                    .insetBy(dx: -pt * 0.18, dy: -pt * 0.08)
+                    .intersection(CGRect(x: 2, y: 2, width: CGFloat(w - 4), height: CGFloat(h - 4)))
+                if !pillRect.isNull && !pillRect.isEmpty {
+                    let radius = min(pillRect.height * 0.35, pt * 0.24)
+                    ns(style.pillColor).setFill()
+                    NSBezierPath(roundedRect: pillRect, xRadius: radius, yRadius: radius).fill()
+                }
+            }
+        }
+
         if style.outline { outline.draw(with: r, options: opts) }
         fill.draw(with: r, options: opts)
         NSGraphicsContext.restoreGraphicsState()

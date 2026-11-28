@@ -224,6 +224,68 @@ final class BRollFTSIndex: @unchecked Sendable {
         }
     }
 
+    func listRecent(limit: Int = 40) throws -> [BRollSearchHit] {
+        let clampedLimit = max(1, min(200, limit))
+        return try lock.withLock {
+            guard let db else { throw BRollIndexError.openFailed("Database closed.") }
+            let sql = """
+            SELECT asset_path, asset_name, start_sec, end_sec, description, tags, mood
+            FROM broll_segments
+            ORDER BY rowid DESC
+            LIMIT ?;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                throw BRollIndexError.sqlFailed(lastError(db))
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(clampedLimit))
+
+            var hits: [BRollSearchHit] = []
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_ROW {
+                    let rawTags = columnString(stmt, 5)
+                    let tags = rawTags
+                        .split(separator: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    hits.append(BRollSearchHit(
+                        assetPath: columnString(stmt, 0),
+                        assetName: columnString(stmt, 1),
+                        startSec: sqlite3_column_double(stmt, 2),
+                        endSec: sqlite3_column_double(stmt, 3),
+                        description: columnString(stmt, 4),
+                        tags: tags,
+                        mood: columnString(stmt, 6),
+                        score: 1.0
+                    ))
+                } else if rc == SQLITE_DONE {
+                    break
+                } else {
+                    throw BRollIndexError.sqlFailed(lastError(db))
+                }
+            }
+            return hits
+        }
+    }
+
+    func stats() throws -> (files: Int, segments: Int) {
+        try lock.withLock {
+            guard let db else { throw BRollIndexError.openFailed("Database closed.") }
+            let sql = "SELECT COUNT(DISTINCT asset_path), COUNT(*) FROM broll_segments;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                throw BRollIndexError.sqlFailed(lastError(db))
+            }
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else {
+                throw BRollIndexError.sqlFailed(lastError(db))
+            }
+            return (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+        }
+    }
+
     func count() throws -> Int {
         try lock.withLock {
             guard let db else { throw BRollIndexError.openFailed("Database closed.") }

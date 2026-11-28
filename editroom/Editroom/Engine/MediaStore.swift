@@ -530,6 +530,32 @@ final class MediaStore: ObservableObject {
 
     // MARK: Waveforms
 
+    /// Ensures the waveform peaks for an asset are decoded and cached (so Auto-Ducking works immediately).
+    func ensureWaveform(for assetID: UUID) async {
+        if waveforms[assetID] != nil { return }
+        guard let rt = runtimes[assetID], let track = rt.audioTrack else { return }
+        let asset = rt.asset
+        let cache = WaveformReader.cacheURL(for: asset.url)
+        var wf = WaveformReader.load(cache)
+        if wf == nil {
+            wf = await BlockingWork.run { WaveformReader.read(asset: asset, track: track) }
+            if let wf { WaveformReader.save(wf, to: cache) }
+        }
+        if let wf, runtimes[assetID] === rt {
+            waveforms[assetID] = wf
+            reversedWaveforms[assetID] = nil
+            notifyVisual()
+        }
+    }
+
+    /// Ensures waveforms are loaded for all audio clips on a given timeline track.
+    func ensureWaveforms(for project: Project, trackID: UUID) async {
+        let assetIDs = Set(project.clips.filter { $0.trackID == trackID && $0.kind == .audio }.compactMap(\.assetID))
+        for id in assetIDs {
+            await ensureWaveform(for: id)
+        }
+    }
+
     /// The waveform the way a clip plays it: mirrored for a reversed clip.
     func waveform(_ c: Clip) -> Waveform? {
         guard let id = c.assetID, let wf = waveforms[id] else { return nil }

@@ -23,16 +23,18 @@
 
 > **Legacy Archive:** The earlier Rust + Slint prototype based on `jub0t/Concat` is preserved intact on the [`archive/concat-m1`](../../tree/archive/concat-m1) branch (`concat-m1-archive` tag).
 
-### Key Capabilities (`M1-E` → `M6-E` Completed)
+### Key Capabilities (`M1-E` → `v1.2` Completed)
 
 | Milestone | Scope | Highlights |
 | :--- | :--- | :--- |
 | **M1-E** | Core Guardrails & Hybrid MCP | `HybridStorage` (`HYBRID_EDIT_DATA_DIR`, UTF-8 safe caches), `SessionLease` (`0o600`, `SIGKILL` recovery), transactional `AgentTurn` (`⌘Z` unified undo), `apply_edl_patch`, `preview_timeline_strip` |
 | **M2-E** | Extensions & Multi-Provider Backend | Keychain/0o600 `SecretStore`, `SkillRegistry` (local & GitHub `SKILL.md`), 2-tier `PluginHost` (trusted MCP sidecars + LUTs/workflows), `ChatSessionStore` (Gemini, OpenAI-compatible, Ollama, Claude/Codex CLI) |
-| **M3-E** | Native Hybrid UI | Collapsible Agent Chat sidebar (`⌘L`), `/skill` & `@playhead` composer, Undo-per-turn card, `Settings` tabs (`Skills`, `Plugins`, `Integrations`), `Library > Stock` browser |
+| **M3-E** | Native Hybrid UI | Collapsible Agent Chat sidebar (`⌘L`), `/skill` & `@playhead` composer, Undo-per-turn card, `Settings` tabs (`Skills`, `Plugins`, `Integrations`), `Library` browser |
 | **M4-E** | ComfyUI Colab & Stock Media | `TunnelManager` (Cloudflare / Tailscale / SSH injection-safe args), `ComfyUIClient` (REST/WS + I2V reference upload + Colab `.ipynb`), `Pexels` + `Pixabay` parallel search, contact sheets & `Sources.txt` |
 | **M5-E** | Smart A-Roll VI & 3-Tier B-Roll | `AudioVAD` + `WhisperCPPProvider` (`P6` zero-hallucination 10s silence guard), persistent **SQLite3 FTS5** index (`đ -> d` normalization), `LocalVLMVisionProvider` + Apple Vision fallback, 3-tier B-roll ladder |
-| **M6-E** | Hardening & 5-Round 4K E2E | `ThisDeviceOnly` Keychain + `SecretRedactor`, Plugin env allowlist & core-secret block, Git hook & SSH option guards, strict IPv4/IPv6 `[::1]` MCP Host/Origin, `DELETE /mcp` cleanup, 5-round 4K HEVC E2E (`502 ms` edits, `2.23 s` export) |
+| **M6-E** | Hardening & 5-Round 4K E2E | `ThisDeviceOnly` Keychain + `SecretRedactor`, Plugin env allowlist & core-secret block, Git hook & SSH option guards, strict IPv4/IPv6 `[::1]` MCP Host/Origin, `DELETE /mcp` cleanup, 5-round 4K HEVC E2E |
+| **v1.1** | Core Audit Fixes (`10/10`) | In-app tool filtering + `import_media` inside `AgentTurn`, multimodal tool screenshots (`inlineData` / `image_url`), Gemini schema sanitizer, streaming & Stop rollback, dynamic ComfyUI checkpoints, Stock `Add V2`, 5 auto-seeded built-in skills |
+| **v1.2** | Vietnamese Creator Suite | Word-level CapCut/Karaoke caption presets (`generate_vietnamese_captions`), BGM auto-ducking (`auto_duck_bgm`) & beat-aligned cuts (`beat_sync_cuts` via `MediaAnalyzer.music`), visual `Library > B-Roll` FTS5 browser with 1-click `Add V2` |
 
 ---
 
@@ -78,12 +80,13 @@ xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration 
 
 BIN="/tmp/hybrid_edit_editroom_dd/Build/Products/Debug/Editroom.app/Contents/MacOS/Editroom"
 
-# 2. Run all 5 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
+# 2. Run all 6 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_1 "$BIN" --hybrid-test /tmp/hybrid_out_1           # 7/7 checks (T1-T7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_2 "$BIN" --extensions-test /tmp/hybrid_out_2       # 7/7 checks (E1-E7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_3 "$BIN" --media-providers-test /tmp/hybrid_out_3  # 6/6 checks (M1-M6)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_4 "$BIN" --smart-editing-test /tmp/hybrid_out_4    # 6/6 checks (S1-S6)
-HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_5 "$BIN" --hardening-4k-test /tmp/hybrid_out_5     # 6/6 checks (H1-H6)
+HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_5 "$BIN" --hardening-4k-test /tmp/hybrid_out_5     # 11/11 checks (H1-H6, V1-V5)
+"$BIN" --creator-v12-test                                                                      # 6/6 checks (C1-C6)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) for detailed MCP tool schemas, architecture notes, and M4 Pro verification logs.
@@ -92,9 +95,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) fo
 
 ## Tiếng Việt
 
-**Hybrid Editor (`hybrid_edit_vid`)** là trình dựng phim native cho macOS Apple Silicon, xây dựng trên lõi [`robbietilton/Editroom`](https://github.com/robbietilton/Editroom) (`Swift / SwiftUI / AVFoundation / Metal`). Ứng dụng kết hợp chỉnh sửa timeline trực tiếp của người dùng với tác tử AI (**Agent Chat `⌘L`** + **MCP Server**), cài đặt **Skill từ GitHub** & **Plugin mở rộng**, tạo sinh media trên **ComfyUI Google Colab**, tìm **Stock miễn phí (Pexels/Pixabay)**, cùng bộ **Smart A-Roll Tiếng Việt (Whisper + VAD chống ảo giác)** và **Smart B-Roll 3 tầng (Local SQLite FTS5 -> Stock -> ComfyUI)**.
+**Hybrid Editor (`hybrid_edit_vid`)** là trình dựng phim native cho macOS Apple Silicon, xây dựng trên lõi [`robbietilton/Editroom`](https://github.com/robbietilton/Editroom) (`Swift / SwiftUI / AVFoundation / Metal`). Ứng dụng kết hợp chỉnh sửa timeline trực tiếp của người dùng với tác tử AI (**Agent Chat `⌘L`** + **MCP Server**), cài đặt **Skill từ GitHub** & **Plugin mở rộng**, tạo sinh media trên **ComfyUI Google Colab**, tìm **Stock miễn phí (Pexels/Pixabay)**, cùng bộ **Smart A-Roll Tiếng Việt (Whisper + VAD chống ảo giác)**, **Smart B-Roll 3 tầng (Local SQLite FTS5 -> Stock -> ComfyUI)**, **phụ đề Karaoke Tiếng Việt theo từng từ (`CapCut` / `Karaoke Pill`)**, **Auto-Ducking nhạc nền** và **khớp cắt theo nhịp Beat**.
 
 > **Lưu trữ mã nguồn Concat cũ:** Phiên bản thử nghiệm Rust/Slint trước đây dựa trên `jub0t/Concat` được giữ nguyên tại nhánh [`archive/concat-m1`](../../tree/archive/concat-m1) và tag `concat-m1-archive`.
 
 ### Lộ trình hiện tại
-- ✅ **M1-E → M6-E** đã hoàn thành toàn bộ lộ trình và kiểm chứng thực nghiệm **32/32 bài test tự động** trên Apple M4 Pro (bao gồm benchmark E2E 4K HEVC 5 vòng liên tiếp).
+- ✅ **M1-E → M6-E**, **v1.1 Core Audit Fixes** & **v1.2 Bộ tính năng Creator Tiếng Việt** đã hoàn thành và kiểm chứng thực nghiệm **43/43 bài test tự động trên 6 suite** trên Apple M4 Pro (bao gồm phụ đề Karaoke export parity, Auto-Ducking BGM, Beat-Sync Cuts, B-Roll Browser & E2E 4K HEVC).

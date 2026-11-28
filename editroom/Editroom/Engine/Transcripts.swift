@@ -189,6 +189,14 @@ final class Transcripts: ObservableObject {
 
     func transcript(for url: URL) -> Transcript? { made[url.path] ?? load(url) }
 
+    func storeTranscript(_ transcript: Transcript, for url: URL) {
+        made[url.path] = transcript
+        states[url.path] = .ready
+        save(transcript, for: url)
+        for c in waiters[url.path] ?? [] { c.resume(returning: transcript) }
+        waiters[url.path] = nil
+    }
+
     func state(for url: URL) -> State? { made[url.path] != nil ? .ready : states[url.path] }
 
     /// Queues a file. `soon` puts it first (Magic is asking for it now).
@@ -281,8 +289,11 @@ final class Transcripts: ObservableObject {
 
     private func load(_ url: URL) -> Transcript? {
         guard let data = try? Data(contentsOf: file(for: url)), let t = try? JSONDecoder().decode(Transcript.self, from: data) else { return nil }
-        // Heard in another language than the one now set (or the Mac's): heard again.
-        if !t.language.isEmpty, let now = currentLanguage, t.language != now { return nil }
+        // Keep Whisper / configured-language transcripts even when macOS system locale differs.
+        let prefs = SpeechPrefs.load()
+        let matchesConfigured = t.language.caseInsensitiveCompare(prefs.whisperLanguage) == .orderedSame
+            || (prefs.preferWhisper && t.language.lowercased().hasPrefix("vi"))
+        if !t.language.isEmpty, !matchesConfigured, let now = currentLanguage, t.language != now { return nil }
         made[url.path] = t
         return t
     }

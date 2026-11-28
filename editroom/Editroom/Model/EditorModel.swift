@@ -2621,6 +2621,22 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Automatically ducks the music/BGM track under the primary dialogue/voice track in one Undo step.
+    func autoDuckBGM(duckDB: Double = -14.0) {
+        let audio = project.audioTracks
+        guard audio.count >= 2 else { return }
+        let linkedAudioIDs = Set(project.clips.filter { $0.kind == .audio && $0.linkID != nil }.map(\.trackID))
+        let voiceTrack = audio.first(where: { linkedAudioIDs.contains($0.id) && !$0.muted }) ?? audio[0]
+        guard let bgmTrack = audio.first(where: { $0.id != voiceTrack.id && !$0.locked }) else { return }
+        let targetDuck = duckDB.clamped(to: -36...(-1))
+        let pSnapshot = project
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.media.ensureWaveforms(for: pSnapshot, trackID: voiceTrack.id)
+            self.duck(bgmTrack.id, under: voiceTrack.id, amount: targetDuck)
+        }
+    }
+
     /// Sets (or with nil removes) the transition into a clip from the one before it.
     func setTransition(into id: UUID, _ transition: Transition?) {
         mutate { p in

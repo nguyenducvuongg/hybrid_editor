@@ -8,6 +8,41 @@ struct CaptionTrack: Codable, Hashable {
     var style = CaptionStyle()
 }
 
+/// Curated visual & chunking presets tailored for short-form and Vietnamese creator captions.
+enum CaptionPreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case classic
+    case capcutYellow = "capcut_yellow"
+    case karaokePill = "karaoke_pill"
+    case neonBox = "neon_box"
+    case minimalClean = "minimal_clean"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .classic: "Classic"
+        case .capcutYellow: "CapCut Yellow"
+        case .karaokePill: "Karaoke Pill"
+        case .neonBox: "Neon Box"
+        case .minimalClean: "Minimal"
+        }
+    }
+
+    static func from(_ raw: String) -> CaptionPreset? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "_")
+            .lowercased()
+        switch key {
+        case "classic": return .classic
+        case "capcut_yellow", "capcutyellow", "capcut": return .capcutYellow
+        case "karaoke_pill", "karaokepill", "karaoke": return .karaokePill
+        case "neon_box", "neonbox", "neon": return .neonBox
+        case "minimal_clean", "minimalclean", "minimal": return .minimalClean
+        default: return nil
+        }
+    }
+}
+
 /// How every caption looks. One style for the whole track.
 struct CaptionStyle: Codable, Hashable {
     /// Point size relative to a 1080px frame's shorter side.
@@ -21,8 +56,18 @@ struct CaptionStyle: Codable, Hashable {
     /// A dark edge around the letters, so they read over anything.
     var outline = true
     var outlineColor = RGBA.black
+    /// Rounded karaoke highlight pill behind the active word.
+    var pillHighlight = false
+    var pillColor = RGBA(r: 0.99, g: 0.82, b: 0.14, a: 1)
+    /// Render text in uppercase (Vietnamese locale aware).
+    var uppercase = false
+    /// Max words per caption block (0 keeps automatic line length).
+    var maxWordsPerLine: Int = 0
+    /// Scale multiplier applied to the active highlighted word (1.0...1.25).
+    var activeScale: Double = 1.0
 
     static let sizeRange = 28.0...140.0
+    static let scaleRange = 1.0...1.25
 
     init() {}
 
@@ -36,6 +81,81 @@ struct CaptionStyle: Codable, Hashable {
         highlightColor = try c.decodeIfPresent(RGBA.self, forKey: .highlightColor) ?? d.highlightColor
         outline = try c.decodeIfPresent(Bool.self, forKey: .outline) ?? d.outline
         outlineColor = try c.decodeIfPresent(RGBA.self, forKey: .outlineColor) ?? d.outlineColor
+        pillHighlight = try c.decodeIfPresent(Bool.self, forKey: .pillHighlight) ?? d.pillHighlight
+        pillColor = try c.decodeIfPresent(RGBA.self, forKey: .pillColor) ?? d.pillColor
+        uppercase = try c.decodeIfPresent(Bool.self, forKey: .uppercase) ?? d.uppercase
+        maxWordsPerLine = try c.decodeIfPresent(Int.self, forKey: .maxWordsPerLine) ?? d.maxWordsPerLine
+        activeScale = try c.decodeIfPresent(Double.self, forKey: .activeScale) ?? d.activeScale
+    }
+
+    mutating func apply(preset: CaptionPreset) {
+        switch preset {
+        case .classic:
+            size = 64
+            y = 0.78
+            highlight = true
+            textColor = .white
+            highlightColor = RGBA(r: 1, g: 0.84, b: 0.25, a: 1)
+            outline = true
+            outlineColor = .black
+            pillHighlight = false
+            pillColor = RGBA(r: 0.99, g: 0.82, b: 0.14, a: 1)
+            uppercase = false
+            maxWordsPerLine = 0
+            activeScale = 1.0
+        case .capcutYellow:
+            size = 76
+            y = 0.76
+            highlight = true
+            textColor = .white
+            highlightColor = RGBA(r: 1, g: 0.88, b: 0.12, a: 1)
+            outline = true
+            outlineColor = .black
+            pillHighlight = false
+            pillColor = RGBA(r: 0.99, g: 0.82, b: 0.14, a: 1)
+            uppercase = true
+            maxWordsPerLine = 4
+            activeScale = 1.14
+        case .karaokePill:
+            size = 72
+            y = 0.76
+            highlight = true
+            textColor = .white
+            highlightColor = RGBA(r: 0.08, g: 0.08, b: 0.10, a: 1)
+            outline = true
+            outlineColor = RGBA(r: 0, g: 0, b: 0, a: 0.85)
+            pillHighlight = true
+            pillColor = RGBA(r: 0.99, g: 0.82, b: 0.14, a: 1)
+            uppercase = false
+            maxWordsPerLine = 4
+            activeScale = 1.08
+        case .neonBox:
+            size = 74
+            y = 0.75
+            highlight = true
+            textColor = .white
+            highlightColor = .white
+            outline = true
+            outlineColor = .black
+            pillHighlight = true
+            pillColor = RGBA(r: 0.14, g: 0.72, b: 0.96, a: 1)
+            uppercase = true
+            maxWordsPerLine = 3
+            activeScale = 1.12
+        case .minimalClean:
+            size = 58
+            y = 0.82
+            highlight = true
+            textColor = RGBA(r: 0.96, g: 0.96, b: 0.96, a: 1)
+            highlightColor = RGBA(r: 0.35, g: 0.92, b: 0.56, a: 1)
+            outline = false
+            outlineColor = .black
+            pillHighlight = false
+            pillColor = RGBA(r: 0.35, g: 0.92, b: 0.56, a: 1)
+            uppercase = false
+            maxWordsPerLine = 5
+            activeScale = 1.0
+        }
     }
 }
 
@@ -160,10 +280,11 @@ enum CaptionLayout {
     static let pause = 0.5
 
     static func blocks(_ project: Project, transcript: (MediaAsset) -> Transcript?) -> [CaptionBlock] {
+        let maxWords = project.captions?.style.maxWordsPerLine ?? 0
         var out: [CaptionBlock] = []
         for clip in project.captionedClips {
             guard let asset = project.asset(clip.assetID), let script = transcript(asset), !script.isEmpty else { continue }
-            out += blocks(for: clip, asset: asset, words: script.words, fixes: project.captionFixes?[asset.id] ?? [])
+            out += blocks(for: clip, asset: asset, words: script.words, fixes: project.captionFixes?[asset.id] ?? [], maxWords: maxWords)
         }
         out.sort { $0.start < $1.start }
         // Overlapping speech (two people at once): each caption gives way to the next.
@@ -173,9 +294,9 @@ enum CaptionLayout {
         return out
     }
 
-    /// A run of talking cut into even phrases: as many as keep each within `maxChars` and `maxSeconds`,
-    /// each cut at the word nearest an even share (a little nearer after a comma).
-    private static func phrases(_ run: [CaptionBlock.Word]) -> [[CaptionBlock.Word]] {
+    /// A run of talking cut into even phrases: as many as keep each within `maxChars` and `maxSeconds`
+    /// (and `maxWords` when set), each cut at the word nearest an even share (a little nearer after a comma).
+    private static func phrases(_ run: [CaptionBlock.Word], maxWords: Int) -> [[CaptionBlock.Word]] {
         guard let first = run.first, let last = run.last else { return [] }
         // Characters up to the end of each word.
         var ends: [Int] = []
@@ -186,7 +307,8 @@ enum CaptionLayout {
         }
         let byChars = Int((Double(total) / Double(maxChars)).rounded(.up))
         let byTime = Int(((last.end - first.start) / maxSeconds).rounded(.up))
-        let n = min(run.count, max(1, byChars, byTime))
+        let byWords = maxWords > 0 ? Int((Double(run.count) / Double(maxWords)).rounded(.up)) : 1
+        let n = min(run.count, max(1, max(byChars, max(byTime, byWords))))
         guard n > 1 else { return [run] }
         var cuts: [Int] = []
         var from = 0
@@ -214,7 +336,7 @@ enum CaptionLayout {
         return out
     }
 
-    private static func blocks(for clip: Clip, asset: MediaAsset, words: [Transcript.Word], fixes: [CaptionFix]) -> [CaptionBlock] {
+    private static func blocks(for clip: Clip, asset: MediaAsset, words: [Transcript.Word], fixes: [CaptionFix], maxWords: Int) -> [CaptionBlock] {
         let s0 = clip.sourceStart, s1 = s0 + clip.sourceLength
         let at = { (s: Double) in min(clip.end, max(clip.start, clip.start + clip.timelineSpan(from: s0, to: s))) }
         // The words heard in the clip (most of the word inside it), on the timeline, with any fixes. A word
@@ -264,7 +386,7 @@ enum CaptionLayout {
                 runs.append([w])
             }
         }
-        let groups = runs.flatMap(phrases)
+        let groups = runs.flatMap { phrases($0, maxWords: maxWords) }
 
         var out: [CaptionBlock] = []
         for (i, g) in groups.enumerated() {
