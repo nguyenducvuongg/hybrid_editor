@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             PluginHost.shared.stopAll()
+            TunnelManager.shared.stop()
             Workspace.shared.autosaveAll()
         }
     }
@@ -215,6 +216,7 @@ struct EditroomApp: App {
         }
         HybridGuardrailsTest.runIfRequested()
         ExtensionsTest.runIfRequested()
+        MediaProvidersTest.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }

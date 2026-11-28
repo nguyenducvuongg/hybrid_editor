@@ -136,7 +136,7 @@
 - **M1-E · Core Guardrails & Hybrid MCP (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** ✅ Hoàn thành (`specs/002-editroom-guardrails-mcp/`, `62ff8c67`).
 - **M2-E · Secrets, GitHub Skills, 3-Tier Plugins & Multi-Provider Chat Backend:** ✅ Hoàn thành (`specs/003-extensions-agent-backend/`, `63590a9a`).
 - **M3-E · Native Hybrid UI:** ✅ Hoàn thành (`specs/004-native-hybrid-ui/`): Sidebar **Agent Chat** thu/mở (`⌘L`), tab **Skills**, **Plugins**, **Integrations** trong `SettingsView` + trình duyệt **Stock** nhanh trong `LibraryView`.
-- **M4-E · ComfyUI Colab Tunnel & Stock APIs:** `TunnelManager` (SSH Tunnel / Tailscale / Cloudflare Tunnel), `ComfyUIClient` (REST + WebSocket + `/upload/image` I2V + Workflow JSON templates + Colab notebook), `PexelsProvider` & `PixabayProvider`, 4 MCP tools (`comfy_status`, `comfy_generate`, `search_stock_media`, `import_stock_media`) + 2 built-in skills.
+- **M4-E · ComfyUI Colab Tunnel & Stock APIs:** ✅ Hoàn thành (`specs/005-comfyui-stock-providers/`): `TunnelManager` (SSH/Tailscale/Cloudflare), `ComfyUIClient` (REST/WS + I2V + Workflows + Colab notebook), `PexelsProvider` & `PixabayProvider`, 4 MCP tools + live `StockLibraryView`.
 - **M5-E · Smart A-Roll Tiếng Việt & Smart B-Roll 3 Tầng:** `TranscriptionProvider` (`whisper.cpp` Metal `large-v3-turbo` + Silero VAD, test 10s im lặng `P6`) + `VisualIndexProvider` (Local VLM + SQLite FTS5) với chuỗi dự phòng tự động: **1. B-Roll local → 2. Pexels/Pixabay → 3. Sinh mới qua ComfyUI Colab**.
 - **M6-E · Hardening & 5-Round 4K E2E:** Rà soát bảo mật Keychain/Plugin/GitHub, tối ưu Antigravity 2.0 live-attach và benchmark E2E 5 vòng liên tiếp trên 4K/1080p footage.
 
@@ -203,3 +203,20 @@
 | `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` với các view SwiftUI mới | **`** BUILD SUCCEEDED **`** (`exit 0`, ~12s) |
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m3e_data .../Editroom --extensions-test /tmp/hybrid_edit_m3e_out` (`BypassSandbox: true`) | Bộ 7 test (`E1–E7`), gồm `E7` (`NSHostingView` layout smoke test 5 view + `ComfyConnectionPrefs`/`ChatProviderPrefs` round-trip) | **7/7 PASSED** (`ALL 7 EXTENSION CHECKS PASSED`, `exit 0`, ~10s) |
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Hồi quy guardrails M1-E (`T1–T7`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~11s) |
+
+---
+
+## 9. Milestone 4-E — ComfyUI Colab Tunnel & Free Stock Media Providers (`2026-11-28`)
+
+### Kiến trúc đã triển khai (`specs/005-comfyui-stock-providers/`)
+- **Đường hầm Colab an toàn (`TunnelManager`):** [TunnelManager.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/ComfyUI/TunnelManager.swift) — hỗ trợ `.cloudflare`, `.tailscale`, `.ssh`; `parseSafeSSHArguments` chặn shell metacharacter (`; | & $ \` > <`), tiến trình con thu hồi sạch qua `TunnelManager.shared.stop()` khi thoát app (`EditroomApp.swift`).
+- **ComfyUI Remote Generator (`ComfyUIClient`):** [ComfyUIClient.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/ComfyUI/ComfyUIClient.swift) — kiểm tra GPU/VRAM/checkpoints (`/system_stats`, `/object_info`), chụp frame trên timeline làm ảnh tham chiếu I2V (`POST /upload/image`), bind biến mẫu workflow JSON từ `ComfyWorkflows/` và Tier B plugin, theo dõi WebSocket + `/history`, lưu nguyên tử kèm `Sources.txt` và import trả `asset_id`.
+- **Kho Stock Miễn Phí (`Pexels`, `Pixabay`) & UI:** [StockMediaClient.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/Stock/StockMediaClient.swift), [StockLibraryView.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/UI/StockLibraryView.swift) — tìm song song Pexels/Pixabay, dựng contact sheet JPEG đánh số, kiểm tra ảnh (`CGImageSource`) / video (`AVURLAsset`), ghi `Sources.txt` và hỗ trợ 1-click Import ngay trong `LibraryView > Stock`.
+- **4 MCP Tools & Tài nguyên đi kèm:** [MCPTools+Hybrid.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/MCPTools+Hybrid.swift) (`comfy_status`, `comfy_generate`, `search_stock_media`, `import_stock_media`), Colab notebook [editroom_comfyui_colab.ipynb](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/colab/editroom_comfyui_colab.ipynb) cùng 2 built-in skills ([comfy-broll-generator](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/editor-skills/comfy-broll-generator/SKILL.md), [stock-media-finder](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/assets/editor-skills/stock-media-finder/SKILL.md)).
+
+### Kiểm chứng thực nghiệm trên M4 Pro (`2026-11-28`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` sau khi thêm `Providers/` & `MediaProvidersTest` | **`** BUILD SUCCEEDED **`** (`exit 0`, ~10s) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m4e_data .../Editroom --media-providers-test /tmp/hybrid_edit_m4e_out` (`BypassSandbox: true`) | Bộ 6 test (`M1–M6` trong `MediaProvidersTest.swift`): SSH injection guard & kill child, ComfyUI mock HTTP + I2V upload + Undo, Pexels/Pixabay parallel search + JPEG contact sheet, stock download + `Sources.txt` + Undo, Colab `.ipynb` + 2 `SKILL.md`, `StockLibraryView` render smoke | **6/6 PASSED** (`ALL 6 MEDIA PROVIDER CHECKS PASSED`, `exit 0`, ~4s) |
+| `--extensions-test` (`E1–E7`) + `--hybrid-test` (`T1–T7`) (`BypassSandbox: true`) | Kiểm tra hồi quy toàn bộ bộ kiểm thử M1-E -> M4-E | **7/7 + 7/7 PASSED** (`exit 0`, ~11s) |
