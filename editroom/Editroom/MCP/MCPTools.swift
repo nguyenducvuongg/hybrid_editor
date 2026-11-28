@@ -171,7 +171,7 @@ enum MCPTools {
             })
 
         case "list_looks":
-            return json(BuiltInLook.all.map(\.name))
+            return json(BuiltInLook.all.map(\.name) + PluginHost.shared.activeLUTPaths().map(\.path))
 
         case "import_media":
             try notInMagic()
@@ -615,6 +615,9 @@ enum MCPTools {
             return text("Saved.")
 
         default:
+            if name.hasPrefix("plugin.") {
+                return try await PluginHost.shared.callNamespacedTool(name, arguments: args)
+            }
             if let out = try await callHybrid(name, args, model: model, client: client, draft: draft, sessionId: sessionId) { return out }
             if let out = try await callMore(name, args, model: model, who: who, draft: draft) { return out }
             throw MCPToolError("No tool called \(name).")

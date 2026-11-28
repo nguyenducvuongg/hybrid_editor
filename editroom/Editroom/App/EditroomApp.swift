@@ -93,7 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { Workspace.shared.autosaveAll() }
+        MainActor.assumeIsolated {
+            PluginHost.shared.stopAll()
+            Workspace.shared.autosaveAll()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -211,6 +214,7 @@ struct EditroomApp: App {
             Self.carryOverFromCutAndPlay()
         }
         HybridGuardrailsTest.runIfRequested()
+        ExtensionsTest.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }

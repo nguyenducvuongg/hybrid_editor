@@ -133,10 +133,12 @@
   - `edit_hevc_4k_web.mp4`: `hevc`, `3840x2160`, `30/1 fps`, `aac`, `duration=4.500000`, `1,360,703 bytes`.
 
 ### Lộ trình tiếp theo trên lõi `Editroom` (`feat/editroom-core`)
-- **M1-E · Guardrails & Live-Attach Hybrid Control (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** ✅ Hoàn thành (`specs/002-editroom-guardrails-mcp/`).
-- **M2-E · Smart A-Roll Tiếng Việt (`I4`, `I6`, `P6`):** Cắm `whisper.cpp` (Metal, `large-v3-turbo`) + Silero VAD vào `Transcripts.swift`, bổ sung test hồi quy 10s im lặng (`P6`) và runtime skill `assets/editor-skills/aroll-rough-cut/SKILL.md`.
-- **M3-E · Smart B-Roll Context Engine:** Tích hợp Ollama/LM Studio (local VLM) + SQLite FTS5 vào `SceneTags.swift` & `MCPTools` (`index_broll_folder`, `search_broll`, `insert_broll_overlay`) cùng `assets/editor-skills/smart-broll-inserter/SKILL.md`.
-- **M4-E · Antigravity 2.0 Integration & 5-Round E2E:** Hỗ trợ kết nối 1-click Antigravity trong `AgentConnect.swift` và kiểm thử E2E 5 vòng liên tiếp trên 4K/1080p footage.
+- **M1-E · Core Guardrails & Hybrid MCP (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** ✅ Hoàn thành (`specs/002-editroom-guardrails-mcp/`, `62ff8c67`).
+- **M2-E · Secrets, GitHub Skills, 3-Tier Plugins & Multi-Provider Chat Backend:** ✅ Hoàn thành (`specs/003-extensions-agent-backend/`).
+- **M3-E · Native Hybrid UI:** Sidebar **Agent Chat** thu/mở (`⌘L`) hỗ trợ hội thoại nhiều lượt, `/skill`, `@mention`, thẻ `AgentTurn` có `Keep`/`Undo Turn`/`Rollback`; thêm tab **Skills**, **Plugins**, **Integrations** trong `SettingsView` + trình duyệt **Stock** nhanh trong `LibraryView`.
+- **M4-E · ComfyUI Colab Tunnel & Stock APIs:** `TunnelManager` (SSH Tunnel / Tailscale / Cloudflare Tunnel), `ComfyUIClient` (REST + WebSocket + `/upload/image` I2V + Workflow JSON templates + Colab notebook), `PexelsProvider` & `PixabayProvider`, 4 MCP tools (`comfy_status`, `comfy_generate`, `search_stock_media`, `import_stock_media`) + 2 built-in skills.
+- **M5-E · Smart A-Roll Tiếng Việt & Smart B-Roll 3 Tầng:** `TranscriptionProvider` (`whisper.cpp` Metal `large-v3-turbo` + Silero VAD, test 10s im lặng `P6`) + `VisualIndexProvider` (Local VLM + SQLite FTS5) với chuỗi dự phòng tự động: **1. B-Roll local → 2. Pexels/Pixabay → 3. Sinh mới qua ComfyUI Colab**.
+- **M6-E · Hardening & 5-Round 4K E2E:** Rà soát bảo mật Keychain/Plugin/GitHub, tối ưu Antigravity 2.0 live-attach và benchmark E2E 5 vòng liên tiếp trên 4K/1080p footage.
 
 ---
 
@@ -161,3 +163,24 @@
 | `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` (`Sparkle` + `HybridStorage` + MCP + Guardrails test runner) | **`** BUILD SUCCEEDED **`** (`exit 0`, ~16s incremental) |
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Bộ 7 test tự động (`T1–T7` trong `HybridGuardrailsTest.swift`): cô lập thư mục + tên tiếng Việt dài (`141B`), `ViewState` 20 lần (`revision=0`), `AgentTurn` 3 edit = 1 Undo/Redo + Rollback, `SIGKILL` lease `0o600`, `apply_edl_patch keep_ranges` + Undo, `preview_timeline_strip` vs `Exporter` nền đen RGB < 12 (`P2`), live HTTP `403` spoofed `Host` (`P3`) + 5 vòng E2E `revision` (`port=47920`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~11s) |
 | `graphify update .` | Cập nhật AST Knowledge Graph cho lõi `Editroom` | **39,251 nodes, 92,688 edges, 975 communities** |
+
+---
+
+## 7. Milestone 2-E — Secrets, GitHub Skills, 3-Tier Plugins & Agent Chat Backend (`2026-11-28`)
+
+### Kiến trúc đã triển khai (`specs/003-extensions-agent-backend/`)
+- **Secrets Store tách ly (`I5`):** [KeychainStore.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/KeychainStore.swift) (`KeychainStore` qua `Security.framework` cho runtime tương tác và `FileSecretStore` `0o600` trong `HYBRID_EDIT_DATA_DIR/secrets.json` khi test).
+- **GitHub & Local `SKILL.md` Registry:** [SkillRegistry.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/SkillRegistry.swift) cài skill từ thư mục local hoặc GitHub URL (`owner/repo`, `/tree/<ref>/<subpath>`), ghim `commitSHA`, kiểm tra path-traversal/symlink (`SafePath`), phân tích YAML frontmatter và nạp `/slug` vào prompt agent.
+- **3-Tier `PluginHost`:** [PluginHost.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/PluginHost.swift) nạp `plugin.json` (`schemaVersion == 1`):
+  - **Tier A (MCP Sidecar):** `StdioMCPProcess` chạy off `@MainActor` (`I6`), mặc định `trustedForExecution = false` & `enabled = false` tới khi xác nhận tin cậy; xuất tool `plugin.<id>.<tool>` vào `MCPTools.call` và dừng sạch khi thoát app.
+  - **Tier B (Asset Bundle):** Nạp `.cube` LUT (`list_looks`), ComfyUI workflow JSON templates và skill bundle.
+- **Multi-Provider Chat Backend & 1-Click Antigravity:** [AgentProvider.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Agent/AgentProvider.swift), [ChatSessionStore.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Agent/ChatSessionStore.swift), [AgentConnect.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/AgentConnect.swift):
+  - Hỗ trợ `OpenAICompatibleHTTPProvider` (OpenAI / Ollama / LM Studio), `GeminiHTTPProvider`, `CLIProcessAgentProvider` (`Claude CLI` / `Codex CLI`).
+  - `ChatSessionStore` lưu lịch sử `ChatThread` theo từng dự án (`Chats/`), chạy mỗi lượt trong `LeaseManager` + `begin/commit/rollbackAgentTurn` (`I1`, `I2`), hỗ trợ `revertTurn` 1 chạm; bổ sung `.antigravity` trong `AgentConnect` & `SettingsView`.
+
+### Kiểm chứng thực nghiệm trên M4 Pro (`2026-11-28`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` sau khi thêm `Extensions/`, `Agent/`, `ExtensionsTest` | **`** BUILD SUCCEEDED **`** (`exit 0`) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m2e_data .../Editroom --extensions-test /tmp/hybrid_edit_m2e_out` (`BypassSandbox: true`) | Bộ 6 test (`E1–E6`): `FileSecretStore` `0o600`, `SkillRegistry` local + GitHub pin + traversal guard, `PluginHost` Tier B `list_looks`, Tier A Python MCP sidecar trust gate + `stopAll()`, `ChatSessionStore` `AgentTurn` Undo/Rollback + Antigravity merge, `OpenAICompatibleHTTPProvider` loopback `NWListener` tool-calls | **6/6 PASSED** (`ALL 6 EXTENSION CHECKS PASSED`, `exit 0`, ~12s) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Kiểm tra hồi quy toàn bộ guardrails M1-E (`T1–T7`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~10s) |

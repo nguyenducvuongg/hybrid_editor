@@ -3,7 +3,7 @@ import Foundation
 
 /// The AI apps Editroom can connect to with one click.
 enum AgentApp: String, CaseIterable, Identifiable {
-    case claude, chatgpt, claudeCode
+    case claude, chatgpt, claudeCode, antigravity
     var id: String { rawValue }
 
     var title: String {
@@ -11,6 +11,7 @@ enum AgentApp: String, CaseIterable, Identifiable {
         case .claude: "Claude"
         case .chatgpt: "ChatGPT"
         case .claudeCode: "Claude Code"
+        case .antigravity: "Antigravity"
         }
     }
 
@@ -19,6 +20,7 @@ enum AgentApp: String, CaseIterable, Identifiable {
         switch self {
         case .claude, .claudeCode: "Claude"
         case .chatgpt: "Codex"
+        case .antigravity: "Antigravity"
         }
     }
 
@@ -26,7 +28,7 @@ enum AgentApp: String, CaseIterable, Identifiable {
         switch self {
         case .claude: URL(string: "https://claude.ai/download")
         case .chatgpt: URL(string: "https://chatgpt.com/download")
-        case .claudeCode: nil
+        case .claudeCode, .antigravity: nil
         }
     }
 }
@@ -90,6 +92,8 @@ final class AgentConnect: ObservableObject {
         case .claudeCode:
             if claudeCodeConnected { return .connected }
             return claudeCLI == nil ? .missing : .ready
+        case .antigravity:
+            return antigravityConnected ? .connected : .ready
         }
     }
 
@@ -117,6 +121,7 @@ final class AgentConnect: ObservableObject {
                     if !claudeExtensionInstalled { try connectClaude() }
                 case .chatgpt: try connectCodex()
                 case .claudeCode: try await runClaudeCLI(["mcp", "add", "--scope", "user", "--transport", "http", "editroom", MCPServer.endpoint])
+                case .antigravity: try connectAntigravity()
                 }
                 if app == .claude, openInClaude, !claudeExtensionInstalled {
                     states[app] = .waiting
@@ -140,6 +145,7 @@ final class AgentConnect: ObservableObject {
                     claudeAppOff = true
                 case .chatgpt: try disconnectCodex()
                 case .claudeCode: try await runClaudeCLI(["mcp", "remove", "--scope", "user", "editroom"])
+                case .antigravity: try disconnectAntigravity()
                 }
                 states[app] = status(of: app)
             } catch {
@@ -405,6 +411,44 @@ final class AgentConnect: ObservableObject {
 
     static func tomlString(_ s: String) -> String {
         "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    // MARK: Antigravity
+
+    var antigravityConfigURL: URL {
+        home.appendingPathComponent(".gemini/antigravity/mcp_config.json")
+    }
+
+    var antigravityConnected: Bool {
+        guard let data = try? Data(contentsOf: antigravityConfigURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return (json["mcpServers"] as? [String: Any])?["editroom"] != nil
+    }
+
+    func connectAntigravity() throws {
+        var root: [String: Any] = [:]
+        if let data = try? Data(contentsOf: antigravityConfigURL),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = parsed
+        }
+        var servers = (root["mcpServers"] as? [String: Any]) ?? [:]
+        servers["editroom"] = [
+            "url": MCPServer.endpoint,
+            "serverUrl": MCPServer.endpoint,
+        ]
+        root["mcpServers"] = servers
+        let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL)
+    }
+
+    func disconnectAntigravity() throws {
+        guard let data = try? Data(contentsOf: antigravityConfigURL),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var servers = root["mcpServers"] as? [String: Any] else { return }
+        servers.removeValue(forKey: "editroom")
+        root["mcpServers"] = servers
+        let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL)
     }
 
     // MARK: Claude Code

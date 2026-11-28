@@ -594,7 +594,7 @@ private struct MagicSettings: View {
 
     /// Claude Code only when it's on this Mac.
     private var apps: [AgentApp] {
-        [.claude, .chatgpt, .claudeCode].filter { $0 != .claudeCode || connect.states[$0] != .missing }
+        [.claude, .chatgpt, .claudeCode, .antigravity].filter { $0 != .claudeCode || connect.states[$0] != .missing }
     }
 
     var body: some View {
@@ -757,6 +757,7 @@ private struct AppRow: View {
         let id: String? = switch app {
         case .claude, .claudeCode: AgentConnect.claudeBundleID
         case .chatgpt: AgentConnect.chatgptBundleIDs.first { AgentConnect.appURL($0) != nil }
+        case .antigravity: nil
         }
         guard let id, let url = AgentConnect.appURL(id) else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
@@ -777,6 +778,8 @@ private struct AppRow: View {
         case (.chatgpt, .connected): "Connected. ChatGPT can edit here, and Magic can use it."
         case (.claudeCode, .ready): "Adds Editroom to Claude Code for all your projects."
         case (.claudeCode, .connected): "Connected. New Claude Code sessions can edit here."
+        case (.antigravity, .ready): "Adds Editroom HTTP MCP endpoint to Antigravity (~/.gemini/antigravity/mcp_config.json)."
+        case (.antigravity, .connected): "Connected. Antigravity agents can live-attach and edit here."
         default: ""
         }
     }

@@ -64,6 +64,12 @@ extension MCPTools {
                   "grid_cols": ["type": "integer", "description": "Grid column count (1...4)."],
                   "output": str("Optional .jpg output path written atomically with size verification (`P7`).")],
                  required: ["timestamps"], readOnly: true),
+            tool("list_skills", "List installed skills",
+                 "Lists installed local and GitHub SKILL.md workflows with enabled status.",
+                 readOnly: true),
+            tool("list_plugins", "List installed plugins",
+                 "Lists installed Tier A/B plugins with trust and enabled status plus active LUT/workflow paths.",
+                 readOnly: true),
         ]
     }
 
@@ -246,6 +252,42 @@ extension MCPTools {
                 ["type": "image", "data": sheet.jpeg.base64EncodedString(), "mimeType": "image/jpeg"],
                 ["type": "text", "text": metaText],
             ]
+
+        case "list_skills":
+            let rows: [[String: Any]] = SkillRegistry.shared.skills.map { s in
+                let srcDesc: String
+                switch s.source {
+                case .builtIn: srcDesc = "built_in"
+                case .local(let p): srcDesc = "local:\(p)"
+                case .github(let repo, let ref, let sub, let sha):
+                    srcDesc = "github:\(repo)@\(sha.prefix(8))" + (ref.map { "(\($0))" } ?? "") + (sub.map { "/\($0)" } ?? "")
+                }
+                return [
+                    "id": s.id,
+                    "name": s.name,
+                    "description": s.description,
+                    "enabled": s.enabled,
+                    "source": srcDesc,
+                ]
+            }
+            return json(["skills": rows])
+
+        case "list_plugins":
+            let rows: [[String: Any]] = PluginHost.shared.plugins.map { p in
+                [
+                    "id": p.id,
+                    "name": p.manifest.name,
+                    "version": p.manifest.version,
+                    "description": p.manifest.description,
+                    "enabled": p.enabled,
+                    "trusted_for_execution": p.trustedForExecution,
+                    "has_mcp": p.manifest.mcp != nil,
+                    "luts": p.manifest.luts ?? [],
+                    "workflows": p.manifest.workflows ?? [],
+                    "skills": p.manifest.skills ?? [],
+                ]
+            }
+            return json(["plugins": rows])
 
         default:
             return nil
