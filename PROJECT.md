@@ -103,4 +103,37 @@
 | `graphify update .` | Cập nhật AST Knowledge Graph tại root | **17,451 nodes, 33,921 edges, 2,492 communities** |
 
 ### Ghi chú / Bước tiếp theo (M2)
-- Giao thức Unix Domain Socket (`chmod 600`) và cổng MCP `live-attach` + Semantic/Perception tools (`inspect_project_tree`, `inspect_timeline`, `preview_timeline_strip`, `begin_agent_turn` / `commit_agent_turn`) cùng nối `Studio`/`Host` vào `OpenProjects::claim_live` sẽ được triển khai ở **Milestone 2**.
+- Giao thức Unix Domain Socket (`chmod 600`) và cổng MCP `live-attach` + Semantic/Perception tools (`inspect_project_tree`, `inspect_timeline`, `preview_timeline_strip`, `begin_agent_turn` / `commit_agent_turn`) cùng nối `Studio`/`Host` vào `OpenProjects::claim_live` sẽ được triển khai ở **Milestone 2** (trên nhánh lưu trữ `archive/concat-m1` nếu quay lại lõi Concat).
+
+---
+
+## 5. Phase 0 — Chuyển lõi sang `Editroom` (`feat/editroom-core`)
+
+### Quyết định lưu trữ & chuyển lõi (`2026-11-28`)
+- **Lưu trữ lõi `Concat` (M0+M1):** Giữ nguyên `main` tại commit `3a14ce2c`, tạo nhánh `archive/concat-m1` và annotated tag `concat-m1-archive`, giữ nguyên thư mục `src/` để tham chiếu kiến trúc/thuật toán (đặc biệt `whisper.cpp` Metal + Silero VAD trong `concat-speech` và `LeaseManager` trong `concat-host`).
+- **Lõi mới `editroom/`:** Nhập sạch mã nguồn [`robbietilton/Editroom`](https://github.com/robbietilton/Editroom) (commit `490a7aa`, remote `upstream-editroom`) vào `editroom/` trên nhánh mới `feat/editroom-core`.
+- **Cấu hình build cục bộ (`editroom/Editroom.xcodeproj/project.pbxproj`):** Chuyển Debug & Release sang ad-hoc signing (`CODE_SIGN_IDENTITY = "-"`, `DEVELOPMENT_TEAM = ""`, `ENABLE_HARDENED_RUNTIME = NO`, `PRODUCT_BUNDLE_IDENTIFIER = local.hybrideditvid.Editroom`).
+
+### Bảng bổ sung Giấy phép cho lõi `Editroom`
+| Thành phần | Nguồn / Phiên bản | Giấy phép | Ghi chú tuân thủ |
+| :--- | :--- | :--- | :--- |
+| **Editroom Core & UI** | `robbietilton/Editroom` (`490a7aa`) | `MIT` | Giữ nguyên `editroom/LICENSE` (Wonder Assembly LLC) |
+| **Sparkle** | `sparkle-project/Sparkle` (`2.10.1`, SPM) | `MIT` | Quản lý auto-update macOS |
+| **FFmpeg sidecar** | `editroom/Vendor/ffmpeg/ffmpeg` (`9.1`, `4.6 MB`) | `LGPL-2.1+` | Chạy như tiến trình phụ tách biệt (`Vendor/ffmpeg/README.md`) |
+
+### Kiểm chứng Xcode & Phần cứng M4 Pro (`2026-11-28`)
+- **Môi trường Xcode:** `Xcode 27.2` (`27B52`), `Apple Swift 6.4.2`, `macOS 27.3` (`26C5047e`), `Apple M4 Pro`.
+- **Xcode MCP:** Đã mở & cấp quyền workspace `editroom/Editroom.xcodeproj` (`workspaceIdentifier: workspace-0IS78oauaq`, scheme `Editroom`, destination `My Mac`). *(Lưu ý: `BuildProject` MCP timeout ở 3 phút trong lần đầu tải Sparkle nên build đầy đủ thực hiện qua `xcodebuild` CLI.)*
+- **Build Debug (`xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build`, `BypassSandbox: true`):** **`** BUILD SUCCEEDED **`** trong `640.72s` (cold build gồm resolve/compile `Sparkle 2.10.1` + SDK explicit modules).
+- **Headless SelfTest (`Editroom --selftest /tmp/hybrid_edit_editroom_media /tmp/hybrid_edit_editroom_out`, `BypassSandbox: true`):** Exit code `0` (~25s) trên footage tổng hợp `sample_a.mp4` (`1920x1080 @ 30fps`) + `music.wav`:
+  - **Passed:** `IMPORT OK` (`sample_a.mp4`, `music.wav`), `EXPORT OK` (`edit_h264.mp4`, `edit_hevc_4k_web.mp4`, `edit_noaudio.mp4`, `edit.wav`, `ramp.mp4`, `tone_0db/plus6/minus12.wav`), `UPSCALE OK` (`1080p→4K = 1.9 ms/frame` qua MetalFX), `SPEED GROUP OK`, `RAMP OK`, `STICKY OK`, `TRACKS OK`, `HISTORY OK`, `AI RESULT SHOW OK`, `SEARCH WORDS OK`, `LOCAL CAPTIONS OK`, `CAPTION UNDO OK`, `RIPPLE TRIM OK`, `ZOOM TOOL OK`.
+  - **Skipped / Failed do thiếu bộ fixture test gốc của tác giả (`a_clip.mp4`, `c_clip.mp4`, `d_clip.mp4`, `e_clip.mp4`, `a_main.mp4`, `b_tone.wav`, `rot/*.mov`):** `RELINK SKIP`, `RELOAD SKIP`, `RELOAD ROTATED SKIP`, `IMPORT SHOWN FAIL`, `PROMISED FILES FAIL`, `REPLACED FILE FAIL`, `FOLDERS FAIL`. *(Lưu ý: khi chạy trong sandbox bị chặn `AVSampleBufferAudioRenderer` -> bắt buộc `BypassSandbox: true` cho audio/media runtime.)*
+- **Xác minh `ffprobe` đầu ra:**
+  - `edit_h264.mp4`: `h264`, `1280x720`, `30/1 fps`, `aac 48000Hz stereo`, `duration=4.500000`, `359,698 bytes`.
+  - `edit_hevc_4k_web.mp4`: `hevc`, `3840x2160`, `30/1 fps`, `aac`, `duration=4.500000`, `1,360,703 bytes`.
+
+### Lộ trình tiếp theo trên lõi `Editroom` (`feat/editroom-core`)
+- **M1-E · Guardrails & Live-Attach Hybrid Control (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** Tách `HYBRID_EDIT_DATA_DIR`, vá `ReverseAudio.cacheName` theo UTF-8 byte length `<= 180` (`P7`), mở rộng `MCPTools` + `MCPServer` với `begin_agent_turn` / `commit_agent_turn` / `rollback_agent_turn`, `SessionLease` + `revision` check, `apply_edl_patch`, và `preview_timeline_strip`.
+- **M2-E · Smart A-Roll Tiếng Việt (`I4`, `I6`, `P6`):** Cắm `whisper.cpp` (Metal, `large-v3-turbo`) + Silero VAD vào `Transcripts.swift`, bổ sung test hồi quy 10s im lặng (`P6`) và runtime skill `assets/editor-skills/aroll-rough-cut/SKILL.md`.
+- **M3-E · Smart B-Roll Context Engine:** Tích hợp Ollama/LM Studio (local VLM) + SQLite FTS5 vào `SceneTags.swift` & `MCPTools` (`index_broll_folder`, `search_broll`, `insert_broll_overlay`) cùng `assets/editor-skills/smart-broll-inserter/SKILL.md`.
+- **M4-E · Antigravity 2.0 Integration & 5-Round E2E:** Hỗ trợ kết nối 1-click Antigravity trong `AgentConnect.swift` và kiểm thử E2E 5 vòng liên tiếp trên 4K/1080p footage.

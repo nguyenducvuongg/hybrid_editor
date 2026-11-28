@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editroom clip colours</title>
+<style>
+:root{
+  --bg:#0A0A0A; --panel:#111111; --raised:#1A1A1A; --line:#1E1E1E;
+  --text:#F2F2F0; --dim:#9A9A96; --faint:#5C5C59; --red:#FF4A1C;
+  --sans:-apple-system,"SF Pro Text","Helvetica Neue",sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1C1C1C;font-family:var(--sans);color:var(--text);-webkit-font-smoothing:antialiased;padding:44px 48px 40px;width:1560px}
+.intro{margin-left:332px;font-size:15px;color:var(--dim);margin-bottom:28px;line-height:1.5}
+.intro b{color:var(--text);font-weight:600}
+.row{display:grid;grid-template-columns:300px 1fr;gap:32px;margin-bottom:34px;align-items:start}
+.copy{padding-top:56px}
+.pick{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--red);margin-bottom:6px}
+.copy h2{font-size:21px;font-weight:600;margin-bottom:8px;line-height:1.2}
+.copy p{font-size:14.5px;line-height:1.55;color:var(--dim)}
+.copy p + p{margin-top:10px}
+
+.tl{background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px #000}
+.tools{height:44px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--panel)}
+.tools .sp{flex:1}
+.seg{display:flex;background:var(--bg);border-radius:9px;padding:3px;gap:2px}
+.seg span{width:28px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.seg span.on{background:#2A2A2A;color:var(--text)}
+.act{font-size:11.5px;font-weight:500;color:var(--dim);padding:0 8px}
+.chip{height:24px;padding:0 10px;border-radius:7px;display:flex;align-items:center;font-size:11.5px;font-weight:500;color:var(--faint)}
+.chip.on{background:#2A2A2A;color:var(--text)}
+.chip.new{position:relative}
+.chip.new::after{content:"";position:absolute;inset:-4px;border-radius:10px;border:1.5px dashed rgba(255,74,28,.85)}
+.zfit{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--dim);margin-left:4px}
+
+.grid{display:grid;grid-template-columns:96px 1fr;position:relative}
+.corner{background:var(--panel);height:26px}
+.ticks{height:26px;position:relative;background:var(--bg);border-bottom:1px solid var(--line)}
+.ticks span{position:absolute;top:7px;font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:4px}
+.ticks i{position:absolute;bottom:0;width:1px;height:6px;background:#2a2a2a}
+.ticks i.big{height:10px;background:#444}
+.head{height:46px;display:flex;align-items:center;padding-left:14px;background:var(--panel);border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;font-weight:500;color:var(--text)}
+.divider{height:9px;background:var(--panel);border-bottom:1px solid var(--line)}
+.lane{height:46px;position:relative;border-bottom:1px solid var(--line);background:#0D0D0D}
+.lane.alt{background:#0A0A0A}
+.lanediv{height:9px;background:#080808;border-bottom:1px solid var(--line)}
+
+.clip{position:absolute;top:2px;bottom:2px;border-radius:7px;overflow:hidden;background:#1E1E1E}
+.clip .edge{position:absolute;inset:0;border-radius:7px;box-shadow:inset 0 0 0 1px #2C2C2C;z-index:6;pointer-events:none}
+.clip.sel .edge{box-shadow:inset 0 0 0 1.5px #fff}
+.clip .strip{position:absolute;left:0;right:0;top:0;height:17px;background:rgba(0,0,0,.45);z-index:2}
+.clip .nm{position:absolute;left:8px;top:2.5px;right:16px;font-size:10.5px;font-weight:600;color:rgba(255,255,255,.95);text-shadow:0 1px 2px rgba(0,0,0,.7);white-space:nowrap;overflow:hidden;z-index:4;display:flex;align-items:center;line-height:13px}
+.nm .tag{display:flex;align-items:center;gap:4px;margin-left:9px}
+.nm .meta{margin-left:9px}
+.wheel{width:9px;height:9px;border-radius:50%;background:conic-gradient(#ff5a4a,#ffd14a,#5adb6b,#4ab8ff,#996bff,#ff5a99,#ff5a4a);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.film{position:absolute;inset:0;display:flex;opacity:.92}
+.film div{flex:none;height:100%;border-right:1px solid rgba(0,0,0,.35)}
+.film.mono{filter:grayscale(1) contrast(1.1)}
+.film.warm{filter:sepia(.35) saturate(1.25) brightness(1.05)}
+.film.adj{filter:contrast(1.18) brightness(1.08)}
+.wave{position:absolute;left:3px;right:3px;top:4px;bottom:4px;display:flex;align-items:center;justify-content:space-between;z-index:1}
+.wave i{width:2px;border-radius:1px;background:#BDBDB9;display:block}
+.gain{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,.5);z-index:3}
+.fade{position:absolute;top:0;bottom:0;z-index:3}
+.textclip .glyph{position:absolute;right:8px;bottom:5px;font-size:15px;font-weight:700;color:rgba(255,255,255,.12)}
+
+.playhead{position:absolute;top:0;bottom:0;width:1.5px;background:var(--red);z-index:9}
+.playhead::before{content:"";position:absolute;top:0;left:-6px;width:13.5px;height:11px;background:var(--red);clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%)}
+
+/* painted stand-ins for real frames, one look per source file */
+.s1817{background:linear-gradient(180deg,#8fa4b8 0 38%,#c9c2b0 39% 55%,#6b5a44 56% 100%)}
+.s1818{background:linear-gradient(180deg,#2d3440 0 30%,#5c6878 31% 62%,#1f2228 63%)}
+.s1819{background:radial-gradient(circle at 70% 30%,#f4e1c0 0 12%,transparent 13%),linear-gradient(180deg,#b88d62 0 50%,#5a3d28 51%)}
+.s1820{background:linear-gradient(180deg,#6f8fa6 0 45%,#d7d0bf 46% 60%,#3e5a3b 61%)}
+.s1824{background:linear-gradient(180deg,#9cc4d9 0 40%,#2e6f8a 41% 70%,#e5dcc2 71%)}
+.s1826{background:linear-gradient(180deg,#343a2c 0 35%,#6d7a45 36% 70%,#2a2d22 71%)}
+</style>
+</head>
+<body>
+
+<p class="intro">Same edit three ways. The new <b>Thumbnails</b> toggle sits after Skim and Audio (dashed outline). Turning it off swaps pictures for flat colour. Names, grade tags, waveforms, gain and fades all stay.</p>
+
+<div class="row">
+  <div class="copy">
+    <h2>Thumbnails on (now)</h2>
+    <p>Pictures in every video clip, painted with their grade. Rich, but when zoomed out or busy the frames turn into noise and it's hard to see where cuts and gaps are.</p>
+  </div>
+  <div class="tl" data-mode="thumbs"></div>
+</div>
+
+<div class="row">
+  <div class="copy">
+    <h2>Off: colour by track</h2>
+    <p>V1 blue, V2 plum, V3 ochre, all audio green. Simple and tidy, but the colour only repeats what the row already says.</p>
+  </div>
+  <div class="tl" data-mode="track"></div>
+</div>
+
+<div class="row">
+  <div class="copy">
+    <div class="pick">My pick</div>
+    <h2>Off: colour by source</h2>
+    <p>Each file gets its own colour, so a reused shot shows up straight away: IMG_1819 twice on V1 and IMG_1824 twice on V2. Audio stays green, one shade per file. Titles and solids share one neutral.</p>
+    <p>With no pictures, the grade tag is the only sign a clip is graded, so it stays on every graded clip.</p>
+  </div>
+  <div class="tl" data-mode="source"></div>
+</div>
+
+<script>
+const SECS = 24;
+let PX = 40;
+const tracks = [
+  {id:"V3", kind:"v"}, {id:"V2", kind:"v"}, {id:"V1", kind:"v"},
+  {div:true},
+  {id:"A1", kind:"a"}, {id:"A2", kind:"a"},
+];
+// start, length, source, extras
+const clips = {
+  V3:[{s:0.3,d:3.2,src:"Coast trip",text:true},{s:14.2,d:2.6,src:"Day two",text:true}],
+  V2:[{s:5.2,d:3.8,src:"IMG_1824",grade:"Warm film",g:"warm"},{s:10.6,d:3.2,src:"IMG_1826"},{s:18.4,d:3.4,src:"IMG_1824",grade:"Warm film",g:"warm"}],
+  V1:[{s:0,d:4.6,src:"IMG_1817"},{s:4.6,d:5.4,src:"IMG_1819",grade:"Warm film",g:"warm",sel:true},
+      {s:10,d:4.1,src:"IMG_1818",grade:"Mono",g:"mono",meta:"50%"},{s:14.1,d:4,src:"IMG_1819",grade:"Warm film",g:"warm"},
+      {s:18.1,d:5.9,src:"IMG_1820",grade:"Graded",g:"adj"}],
+  A1:[{s:0,d:24,src:"Riot - Safety Net",meta:"−6 dB",gain:.42,fadeOut:2.5,seed:3}],
+  A2:[{s:1.6,d:7.2,src:"VO_take3",gain:.3,seed:11,speech:true},{s:11.4,d:8.2,src:"VO_take5",gain:.3,seed:17,speech:true,fadeIn:.6}],
+};
+const trackColour = {V1:"#3A5A80", V2:"#664675", V3:"#7A6428", A1:"#2F6A47", A2:"#2F6A47"};
+const sourceColour = {
+  IMG_1817:"#3A5A80", IMG_1819:"#7A6428", IMG_1818:"#5A4F86", IMG_1820:"#2D6B70",
+  IMG_1824:"#664675", IMG_1826:"#7A4358",
+  "Riot - Safety Net":"#2F6A47", VO_take3:"#4D6B2C", VO_take5:"#4D6B2C",
+};
+const generated = "#4A4844";
+// Lighter tone of a colour, for the clip outline in colour mode.
+const lift = (hex, k) => {
+  const n = parseInt(hex.slice(1),16), c = [n>>16,(n>>8)&255,n&255].map(v => Math.round(v + (255-v)*k));
+  return `rgb(${c.join(",")})`;
+};
+function rand(seed){ let x = seed; return () => (x = (x*16807) % 2147483647) / 2147483647; }
+
+function clipHTML(c, kind, track, mode){
+  const left = c.s*PX, w = c.d*PX;
+  let fill = kind === "a" ? "#151515" : (c.text ? "#1B1B1B" : "#1E1E1E");
+  if (mode === "track") fill = trackColour[track];
+  if (mode === "source") fill = c.text ? generated : sourceColour[c.src];
+  const colour = mode !== "thumbs";
+  let inner = "";
+  if (kind === "v" && !c.text && !colour){
+    const tile = 42*16/9, n = Math.ceil(w/tile);
+    inner += `<div class="film ${c.g||""}">` + Array.from({length:n},()=>`<div class="s${c.src.slice(4)}" style="width:${tile}px"></div>`).join("") + `</div>`;
+    inner += `<div class="strip"></div>`;
+  }
+  if (c.text) inner += `<span class="glyph">T</span>`;
+  if (kind === "a"){
+    const r = rand(c.seed), bars = Math.floor((w-6)/4);
+    let h = "";
+    for (let i=0;i<bars;i++){
+      let v;
+      if (c.speech){ const word = Math.sin(i*0.55 + c.seed) > -0.3; v = word ? 0.25 + r()*0.6 : 0.06 + r()*0.08; }
+      else { const intro = i < bars*0.06; v = intro ? 0.18 + r()*0.08 : 0.5 + r()*0.38 + 0.08*Math.sin(i/9); }
+      if (c.fadeOut && i > bars*(1 - c.fadeOut/c.d)) v *= (bars - i)/(bars*c.fadeOut/c.d);
+      if (c.fadeIn && i < bars*(c.fadeIn/c.d)) v *= i/(bars*c.fadeIn/c.d);
+      const col = colour ? "rgba(235,250,238,.62)" : "#BDBDB9";
+      h += `<i style="height:${Math.max(2, v*100)}%;background:${col}"></i>`;
+    }
+    inner += `<div class="wave">${h}</div>`;
+    inner += `<div class="gain" style="top:${c.gain*100}%"></div>`;
+  }
+  for (const [key, dir] of [["fadeIn",1],["fadeOut",-1]]){
+    if (!c[key]) continue;
+    const fw = c[key]*PX;
+    inner += `<svg class="fade" style="${dir>0?"left":"right"}:0;width:${fw}px;height:100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path d="${dir>0?"M0 100 Q50 0 100 0 L0 0Z":"M100 100 Q50 0 0 0 L100 0Z"}" fill="rgba(0,0,0,.55)"/>
+      <path d="${dir>0?"M0 100 Q50 0 100 0":"M100 100 Q50 0 0 0"}" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+  let label = `<span>${c.src}</span>`;
+  if (c.meta) label += `<span class="meta">${c.meta}</span>`;
+  if (c.grade) label += `<span class="tag"><span class="wheel"></span>${c.grade}</span>`;
+  const edge = colour && !c.sel ? `style="box-shadow:inset 0 0 0 1px ${lift(fill,.18)}"` : "";
+  return `<div class="clip${c.sel?" sel":""}${c.text?" textclip":""}" style="left:${left}px;width:${w-1}px;background:${fill}">
+    ${inner}<div class="nm">${label}</div><div class="edge" ${edge}></div></div>`;
+}
+
+function timeline(el){
+  PX = (el.clientWidth - 96) / SECS;
+  const mode = el.dataset.mode, thumbs = mode === "thumbs";
+  let h = `<div class="tools">
+    <div class="seg"><span class="on"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 2L13 8.2 8.6 9.1 11.1 13.5 9.5 14.4 7 10 3.6 12Z"/></svg></span>
+    <span><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="4" cy="12" r="2.3"/><circle cx="12" cy="12" r="2.3"/><path d="M5.6 10.4L13 2M10.4 10.4L3 2"/></svg></span></div>
+    <span class="act">Split</span><span class="act">Delete</span><span class="sp"></span>
+    <span class="chip on">Snap</span><span class="chip">Sticky</span><span class="chip on">Skim</span><span class="chip">Audio</span>
+    <span class="chip new${thumbs?" on":""}">Thumbnails</span>
+    <span class="zfit"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8h13M4.5 5L1.5 8l3 3M11.5 5l3 3-3 3"/></svg></span>
+  </div><div class="grid"><div class="corner"></div><div class="ticks">`;
+  for (let s=0; s<=SECS; s++){
+    h += `<i class="${s%2?"":"big"}" style="left:${s*PX}px"></i>`;
+    if (s%4===0 && s<SECS) h += `<span style="left:${s*PX}px">0:${String(s).padStart(2,"0")}</span>`;
+  }
+  h += `</div>`;
+  let alt = false;
+  for (const t of tracks){
+    if (t.div){ h += `<div class="divider"></div><div class="lanediv"></div>`; continue; }
+    h += `<div class="head">${t.id}</div><div class="lane${alt?" alt":""}">`;
+    alt = !alt;
+    for (const c of clips[t.id]) h += clipHTML(c, t.kind, t.id, mode);
+    h += `</div>`;
+  }
+  h += `<div class="playhead" style="left:${96 + 7.1*PX}px"></div></div>`;
+  el.innerHTML = h;
+}
+document.querySelectorAll(".tl").forEach(timeline);
+</script>
+</body>
+</html>

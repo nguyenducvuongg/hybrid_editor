@@ -1,0 +1,102 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Accent comparison</title>
+<style>
+:root{--bg:#0A0A0A;--panel:#111;--lane:#141414;--raised:#1A1A1A;--stroke:rgba(255,255,255,.085);--text:#F2F2F0;--dim:#9A9A96;--faint:#5C5C59;--yellow:#F2C14E}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1c1c1c;font-family:-apple-system,"SF Pro Text",system-ui,sans-serif;color:var(--text);padding:36px;width:1560px}
+.row{display:flex;gap:28px}
+.col{flex:1;display:flex;flex-direction:column;gap:12px}
+.head{display:flex;align-items:baseline;gap:12px;padding:0 4px}
+.head h2{font-size:17px;font-weight:600}
+.head code{font:500 13px "SF Mono",ui-monospace,monospace;color:var(--dim)}
+.head .sw{width:14px;height:14px;border-radius:4px;background:var(--a);align-self:center}
+.win{background:var(--panel);border-radius:12px;overflow:hidden;border:1px solid #222;box-shadow:0 20px 50px rgba(0,0,0,.45)}
+.title{height:44px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:var(--dim);border-bottom:1px solid var(--stroke);position:relative}
+.title .dot{width:6px;height:6px;border-radius:50%;background:var(--a)}
+.title .lights{position:absolute;left:14px;display:flex;gap:8px}.title .lights i{width:12px;height:12px;border-radius:50%;background:#3a3a3a}
+.title .exp{position:absolute;right:12px;background:var(--text);color:#111;font-weight:600;font-size:12px;padding:5px 12px;border-radius:14px}
+.viewer{height:250px;background:#000;position:relative;overflow:hidden}
+.viewer .sky{position:absolute;inset:0;background:linear-gradient(#7d93a6,#c9b89a 55%,#5a5a44 56%,#3e4433)}
+.viewer .sun{position:absolute;left:70%;top:22%;width:46px;height:46px;border-radius:50%;background:radial-gradient(#fff6dc,#f4d79a 60%,transparent 70%)}
+.transport{height:64px;display:flex;align-items:center;padding:0 18px;gap:16px;border-bottom:1px solid var(--stroke)}
+.tc{font:500 22px "SF Mono",ui-monospace,monospace;letter-spacing:.5px}
+.tc small{font-size:12px;color:var(--faint);margin-left:6px}
+.play{margin-left:auto;margin-right:auto;width:40px;height:40px;border-radius:50%;background:#f2f2f0;display:flex;align-items:center;justify-content:center}
+.play:after{content:"";border-left:13px solid #111;border-top:8px solid transparent;border-bottom:8px solid transparent;margin-left:3px}
+.meters{display:flex;gap:4px;height:48px;align-items:flex-end}
+.meter{display:flex;flex-direction:column-reverse;gap:1.5px;width:9px}
+.meter i{height:2px;background:#262626;display:block}
+.meter i.w{background:#D9D9D6}.meter i.y{background:var(--yellow)}.meter i.r{background:var(--a)}
+.toolbar{height:42px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--stroke)}
+.chip{font-size:11.5px;font-weight:500;padding:5px 10px;border-radius:7px;color:var(--faint)}
+.chip.on{background:#2A2A2A;color:var(--text)}
+.sp{flex:1}
+.switch{width:30px;height:18px;border-radius:9px;background:var(--a);position:relative}
+.switch:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.lbl{font-size:11.5px;color:var(--dim)}
+.tl{position:relative;height:250px;background:var(--bg)}
+.ruler{height:26px;background:var(--panel);border-bottom:1px solid var(--stroke);position:relative}
+.ruler span{position:absolute;top:6px;font:10px "SF Mono",ui-monospace,monospace;color:var(--faint)}
+.lane{position:absolute;left:0;right:0;height:62px;background:var(--lane)}
+.clip{position:absolute;height:56px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.12)}
+.clip b{position:absolute;left:8px;top:4px;font-size:10.5px;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.f1{background:linear-gradient(90deg,#c38652,#7a4b2c 40%,#d9a066 70%,#8b5a32)}
+.f2{background:linear-gradient(90deg,#7c8f5a,#d8cf63 30%,#4f8a46 60%,#c9c25a)}
+.f3{background:linear-gradient(90deg,#2b5aa8,#5fa3d9 50%,#e8c84d 80%,#2e6f3e)}
+.wave{background:#1d1d1d}
+.wave i{position:absolute;bottom:14px;width:1.5px;background:#8a8a86}
+.ph{position:absolute;top:0;bottom:0;width:1.5px;background:var(--a)}
+.ph:before{content:"";position:absolute;top:13px;left:-6px;width:13px;height:12px;background:var(--a);clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%)}
+.pill{position:absolute;top:4px;background:var(--a);color:#fff;font:500 10px "SF Mono",ui-monospace,monospace;padding:2px 6px;border-radius:4px}
+.marq{position:absolute;border:1px solid var(--a);background:color-mix(in srgb,var(--a) 12%,transparent)}
+.note{font-size:12.5px;color:var(--dim);line-height:1.5;padding:2px 4px}
+</style></head>
+<body>
+<div class="row" id="row"></div>
+<template id="t">
+  <div class="col">
+    <div class="head"><span class="sw"></span><h2></h2><code></code></div>
+    <div class="win">
+      <div class="title"><div class="lights"><i></i><i></i><i></i></div>Coast trip <span class="dot"></span><span class="exp">Export</span></div>
+      <div class="viewer"><div class="sky"></div><div class="sun"></div></div>
+      <div class="transport">
+        <div class="tc">00:00:21:18<small>/ 00:01:24:15</small></div>
+        <div class="play"></div>
+        <div class="meters"><div class="meter m1"></div><div class="meter m2"></div></div>
+      </div>
+      <div class="toolbar">
+        <span class="chip on">Snap</span><span class="chip on">Sticky</span><span class="chip on">Skim</span><span class="chip">Audio</span>
+        <span class="sp"></span><span class="lbl">Include audio</span><span class="switch"></span>
+      </div>
+      <div class="tl">
+        <div class="ruler"><span style="left:8px">0:15</span><span style="left:150px">0:20</span><span style="left:292px">0:25</span><span style="left:434px">0:30</span><span style="left:576px">0:35</span></div>
+        <div class="lane" style="top:34px"></div>
+        <div class="clip f1" style="top:37px;left:10px;width:230px"><b>Golden hour</b></div>
+        <div class="clip f2" style="top:37px;left:244px;width:200px"><b>Ridge walk</b></div>
+        <div class="clip f3" style="top:37px;left:448px;width:260px"><b>Coast</b></div>
+        <div class="lane" style="top:102px"></div>
+        <div class="clip wave" style="top:105px;left:10px;width:700px"><b>Score v2</b></div>
+        <div class="lane" style="top:170px"></div>
+        <div class="marq" style="top:176px;left:300px;width:260px;height:56px"></div>
+        <div class="ph" style="left:262px"></div>
+        <div class="pill" style="left:274px">00:00:21:18</div>
+      </div>
+    </div>
+    <div class="note"></div>
+  </div>
+</template>
+<script>
+const opts=[
+ {a:"#FF4A1C",name:"Current",note:"Red-orange: the top of the meters reads as a clear 'too loud' after yellow, and the playhead stands apart from warm footage."},
+ {a:"#FE7602",name:"Orange",note:"Warmer and friendlier, but the top of the meters sits close to the yellow below it, and the playhead blends more with golden footage."}];
+const row=document.getElementById('row'),t=document.getElementById('t');
+for(const o of opts){
+  const n=t.content.cloneNode(true),c=n.querySelector('.col');
+  c.style.setProperty('--a',o.a);
+  n.querySelector('h2').textContent=o.name; n.querySelector('code').textContent=o.a; n.querySelector('.note').textContent=o.note;
+  for(const [cls,lit] of [['.m1',16],['.m2',15]]){const m=n.querySelector(cls);for(let i=0;i<16;i++){const e=document.createElement('i');if(i<lit)e.className=i>=13?'r':i>=8?'y':'w';m.appendChild(e)}}
+  const w=n.querySelector('.wave');let s=7;for(let x=4;x<696;x+=3){s=(s*9301+49297)%233280;const h=4+(s/233280)*22*(0.5+0.5*Math.sin(x/40));const i=document.createElement('i');i.style.left=x+'px';i.style.height=h+'px';i.style.bottom=(28-h/2)+'px';w.appendChild(i)}
+  row.appendChild(n);
+}
+</script>
+</body></html>

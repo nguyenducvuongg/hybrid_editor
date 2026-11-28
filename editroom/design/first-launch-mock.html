@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editroom first launch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0A0A; --panel:#111111; --raised:#1A1A1A; --field:#161616; --line:#222222; --line2:#2E2E2E;
+  --text:#F2F2F0; --dim:#9A9A96; --faint:#5C5C59; --red:#FF4A1C;
+  --mono:"JetBrains Mono","SF Mono",ui-monospace,monospace;
+  --sans:Inter,-apple-system,"Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#2a2a2a;font-family:var(--sans);color:var(--text);display:flex;justify-content:center;padding:40px 0;-webkit-font-smoothing:antialiased}
+.win{width:1480px;height:940px;background:var(--bg);border-radius:12px;overflow:hidden;display:grid;grid-template-rows:44px 1fr 380px;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 1px #000}
+.lbl{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.mono{font-family:var(--mono)}
+
+/* title bar */
+.bar{display:flex;align-items:center;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.lights{display:flex;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;background:#2c2c2c;display:block}
+.title{flex:1;text-align:center;font-size:12.5px;color:var(--dim)}
+.title b{color:var(--text);font-weight:500}
+.export{height:28px;padding:0 16px;border-radius:14px;background:var(--text);color:#0A0A0A;font-size:12px;font-weight:600;display:flex;align-items:center}
+.job{display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:14px;background:var(--raised);font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-right:8px}
+.job .track{width:56px;height:3px;background:#2a2a2a;border-radius:2px;position:relative}
+.job .track b{position:absolute;inset:0 40% 0 0;background:var(--text);border-radius:2px}
+
+/* upper */
+.upper{display:grid;grid-template-columns:260px 1fr 320px;min-height:0}
+.media{background:var(--panel);border-right:1px solid var(--line);padding:14px 12px;display:flex;flex-direction:column;gap:12px}
+.mhead{display:flex;align-items:center;gap:4px}
+.mhead .lbl{flex:1;color:var(--dim)}
+.ico{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.ico:hover{background:var(--raised)}
+.search{height:30px;border-radius:8px;background:var(--field);border:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--faint);font-size:12px}
+.item{display:flex;gap:10px;align-items:center;padding:5px;border-radius:9px}
+.item.sel{box-shadow:inset 0 0 0 1.5px var(--text)}
+.thumb{width:72px;height:41px;border-radius:5px;overflow:hidden;position:relative;flex:none}
+.item .n{font-size:12px;font-weight:500}
+.item .d{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:3px}
+.scrub{position:absolute;top:0;bottom:0;width:1.5px;background:#fff;left:58%}
+
+/* photos made of gradients */
+.ph1{background:linear-gradient(180deg,#7f93a5 0%,#b9c4ca 48%,#d9d6cd 60%)}
+.ph1::before{content:"";position:absolute;left:0;right:0;top:26%;height:42%;background:linear-gradient(180deg,#56636b,#3d474c);clip-path:polygon(0 72%,10% 44%,19% 58%,33% 8%,45% 46%,56% 30%,67% 56%,80% 18%,91% 40%,100% 30%,100% 100%,0 100%)}
+.ph1::after{content:"";position:absolute;left:0;right:0;bottom:0;height:36%;background:linear-gradient(180deg,#45503f,#1c2019)}
+.ph2{background:linear-gradient(180deg,#e9d7c2 0%,#d7a77e 45%,#8a5a3c 46%,#2a1d16 100%)}
+.ph3{background:linear-gradient(180deg,#1b1d22 0%,#2b2f38 50%,#121315 100%)}
+.ph3::before{content:"";position:absolute;left:39%;top:22%;width:20%;height:36%;border-radius:50%;background:radial-gradient(circle at 45% 40%,#8c7468,#3a302c 75%)}
+.ph3::after{content:"";position:absolute;left:24%;top:56%;width:50%;height:60%;border-radius:45% 45% 0 0;background:#24262b}
+.ph4{background:#141414;display:flex;align-items:center;justify-content:center;gap:2px}
+.ph4 i{width:2px;background:#8a8a86;border-radius:1px;display:block}
+
+/* viewer */
+.viewer{display:flex;flex-direction:column;padding:18px 22px 0;min-width:0;background:var(--bg)}
+.frame{flex:1;display:flex;align-items:center;justify-content:center;min-height:0}
+.pic{aspect-ratio:16/9;height:100%;max-width:100%;border-radius:4px;position:relative;overflow:hidden}
+.pic .sun{position:absolute;right:16%;top:14%;width:7%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#fff6e6,rgba(255,240,220,0) 70%)}
+
+.pic .tree{position:absolute;bottom:30%;z-index:1;width:3.2%;height:30%;background:#161a14;clip-path:polygon(50% 0,100% 100%,0 100%)}
+.pic .title2{z-index:2;position:absolute;left:0;right:0;bottom:16%;text-align:center;font-size:30px;font-weight:600;letter-spacing:-.01em;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.4)}
+.transport{height:64px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+.tc{display:flex;align-items:baseline;gap:10px}
+.tc .now{font-family:var(--mono);font-size:20px;font-weight:500;letter-spacing:.02em}
+.tc .dur{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.keys{display:flex;align-items:center;gap:6px}
+.key{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.play{width:46px;height:46px;border-radius:50%;background:var(--text);display:flex;align-items:center;justify-content:center;margin:0 8px;box-shadow:0 0 0 5px #161616}
+.right{display:flex;justify-content:flex-end;align-items:center;gap:10px}
+.pill{height:24px;padding:0 9px;border-radius:12px;background:var(--raised);font-size:10.5px;font-weight:500;color:var(--dim);display:flex;align-items:center;gap:5px}
+.vmeter{display:flex;gap:2px;height:22px;align-items:flex-end}
+.vmeter span{width:4px;display:flex;flex-direction:column-reverse;gap:1px;height:22px}
+.vmeter span i{height:2px;background:#2a2a2a;display:block}
+.vmeter span i.on{background:#d9d9d6}
+.vmeter span i.hot{background:var(--red)}
+
+/* inspector */
+.insp{background:var(--panel);border-left:1px solid var(--line);padding:14px 18px;overflow:hidden}
+.ititle{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.ititle .n{font-size:14px;font-weight:600}
+.ititle .k{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:auto}
+.sec{border-top:1px solid var(--line);padding:14px 0 6px}
+.sec .h{display:flex;align-items:center;margin-bottom:12px}
+.sec .h .lbl{flex:1}
+.sec .h .reset{font-size:10.5px;color:var(--dim)}
+.readouts{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+.ro .v{font-family:var(--mono);font-size:22px;font-weight:400;letter-spacing:-.01em;line-height:1}
+.ro .v small{font-size:12px;color:var(--dim);margin-left:2px}
+.ro .rule{height:1px;background:var(--line2);margin:7px 0 5px}
+.ro .k{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.ruler{height:26px;position:relative;margin-top:2px;background:repeating-linear-gradient(90deg,#3a3a3a 0 1px,transparent 1px 7px);mask:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);-webkit-mask:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent)}
+.ruler::before{content:"";position:absolute;inset:6px 0;background:repeating-linear-gradient(90deg,#777 0 1px,transparent 1px 35px);background-position:3px 0}
+.needle{position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:var(--red);border-radius:1px}
+.wheels{display:flex;justify-content:space-between;margin-top:4px}
+.wheel{width:80px;text-align:center}
+.wheel .ring{width:72px;height:72px;border-radius:50%;margin:0 auto 7px;background:conic-gradient(from 90deg,#ff5a4a,#f7c84a,#5ad17a,#4ac8f0,#5a6cff,#e05ae0,#ff5a4a);padding:2px;position:relative}
+.wheel .ring::before{content:"";position:absolute;inset:2px;border-radius:50%;background:#141414}
+.wheel .ring::after{content:"";position:absolute;left:50%;top:50%;width:9px;height:9px;margin:-4.5px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px #141414}
+.wheel.moved .ring::after{transform:translate(9px,-7px);background:var(--text)}
+.wheel .k{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.row{display:flex;align-items:center;gap:10px;height:30px}
+.row .rk{width:64px;font-size:11.5px;color:var(--dim)}
+.row .sl{flex:1;height:2px;background:#2a2a2a;border-radius:1px;position:relative}
+.row .sl b{position:absolute;left:0;top:0;bottom:0;background:var(--text);border-radius:1px}
+.row .sl i{position:absolute;top:-6px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--text);box-shadow:0 0 0 3px var(--panel)}
+.row .rv{width:52px;text-align:right;font-family:var(--mono);font-size:11px}
+.fold{display:flex;align-items:center;gap:8px;height:34px;border-top:1px solid var(--line)}
+.fold .lbl{flex:1}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--red)}
+
+/* timeline */
+.tl{background:var(--bg);border-top:1px solid var(--line);display:grid;grid-template-rows:42px 26px 1fr 14px;min-height:0}
+.tools{display:flex;align-items:center;gap:8px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+.seg{display:flex;background:var(--bg);border-radius:9px;padding:3px;gap:2px}
+.seg span{width:30px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.seg span.on{background:var(--raised);color:var(--text);box-shadow:0 0 0 1px var(--line2)}
+.tg{height:24px;padding:0 9px;border-radius:7px;display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:500;color:var(--dim)}
+.tg.on{color:var(--text);background:var(--raised)}
+.tg.on .dot{display:block}
+.tg .dot{display:none}
+.sp{flex:1}
+.rulerrow{display:grid;grid-template-columns:176px 1fr;border-bottom:1px solid var(--line)}
+.rulerrow .corner{background:var(--panel);border-right:1px solid var(--line)}
+.ticks{position:relative;background:repeating-linear-gradient(90deg,#2a2a2a 0 1px,transparent 1px 24px) 0 100%/100% 6px no-repeat,repeating-linear-gradient(90deg,#4a4a4a 0 1px,transparent 1px 120px) 0 100%/100% 12px no-repeat}
+.ticks span{position:absolute;top:5px;margin-left:5px;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.tracks{display:grid;grid-template-columns:176px 1fr;min-height:0;position:relative}
+.heads{background:var(--panel);border-right:1px solid var(--line)}
+.head{height:56px;display:flex;align-items:center;gap:6px;padding:0 10px 0 14px;border-bottom:1px solid var(--line)}
+.head .t{font-family:var(--mono);font-size:11px;font-weight:500;width:24px}
+.mini{width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--dim);background:var(--field)}
+.mini.on{background:var(--text);color:#0A0A0A}
+.gain{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim);background:var(--field);border-radius:6px;padding:4px 7px}
+.hm{width:5px;height:38px;display:flex;flex-direction:column-reverse;gap:1px}
+.hm i{height:2px;background:#262626;display:block}.hm i.on{background:#d9d9d6}
+.gapband{height:10px;border-bottom:1px solid var(--line);background:#0D0D0D}
+.lanes{position:relative;overflow:hidden}
+.lane{height:56px;border-bottom:1px solid var(--line);position:relative}
+.lane.alt{background:#0D0D0D}
+.clip{position:absolute;top:5px;bottom:5px;border-radius:7px;overflow:hidden;background:#1E1E1E;box-shadow:inset 0 0 0 1px #2c2c2c}
+.clip.sel{box-shadow:inset 0 0 0 1.5px var(--text)}
+.clip .nm{position:absolute;left:8px;top:5px;font-size:10.5px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);z-index:2}
+.film{position:absolute;inset:0;display:flex;opacity:.85}
+.film > div{flex:1;position:relative;border-right:1px solid rgba(0,0,0,.35)}
+.clip .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.45),rgba(0,0,0,0) 45%)}
+.wave{position:absolute;left:0;right:0;top:18px;bottom:6px;display:flex;align-items:center;gap:1px;padding:0 4px}
+.wave i{flex:1;background:#bdbdb9;border-radius:1px;display:block}
+.aclip{background:#151515}
+.textclip{background:#1B1B1B}
+.textclip .glyph{position:absolute;left:8px;bottom:6px;font-size:18px;font-weight:600;color:#3a3a3a}
+.fade{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,rgba(0,0,0,.6),transparent)}
+.xfade{position:absolute;top:5px;bottom:5px;border-radius:5px;background:repeating-linear-gradient(135deg,rgba(255,255,255,.22) 0 2px,transparent 2px 7px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.55);z-index:3}
+.playhead{position:absolute;top:-26px;bottom:0;width:1.5px;background:var(--red);z-index:5}
+.playhead::before{content:"";position:absolute;top:0;left:-6px;width:13px;height:10px;background:var(--red);clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%)}
+.zoombar{display:grid;grid-template-columns:176px 1fr;border-top:1px solid var(--line)}
+.zoombar .z{position:relative}
+.zoombar .z b{position:absolute;left:3%;width:55%;top:3px;height:8px;border-radius:4px;background:#2c2c2c}
+.add{height:30px;display:flex;align-items:center;gap:6px;padding-left:14px;font-size:10.5px;color:var(--faint);border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="win">
+
+  <!-- Title bar -->
+  <div class="bar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="title"><b>Untitled</b></div>
+    <div class="export" style="opacity:.35">Export</div>
+  </div>
+
+  <!-- Upper: media · viewer · inspector -->
+  <div class="upper">
+    <aside class="media">
+      <div class="mhead">
+        <span class="lbl">Media</span>
+        <span class="ico" title="Text"><svg width="16" height="14" viewBox="0 0 16 14"><text x="0" y="12" font-size="12.5" font-weight="600" fill="currentColor" font-family="Inter,sans-serif">Aa</text></svg></span>
+        <span class="ico" title="Solid"><svg width="17" height="13" viewBox="0 0 17 13"><rect x=".65" y=".65" width="15.7" height="11.7" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3.3" y="3.3" width="10.4" height="6.4" rx="1" fill="currentColor"/></svg></span>
+        <span class="ico" title="Import"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 9.5v3a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5v-3"/></svg></span>
+      </div>
+      <div class="search"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5" cy="5" r="3.8"/><path d="M8 8l3 3"/></svg>Search</div>
+      <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding-top:28px">
+        <span style="font-size:11.5px;color:var(--faint);text-align:center;line-height:1.5">Imported media<br>appears here</span>
+      </div>
+    </aside>
+
+    <section class="viewer">
+      <div class="frame">
+        <div class="pic" style="background:#000;box-shadow:inset 0 0 0 1px #1b1b1b,inset 0 0 40px rgba(0,0,0,.8);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px">
+          <div style="width:62%;height:58%;border:1.5px dashed #2c2c2c;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+            <svg width="96" height="70" viewBox="0 0 74 54" fill="none" stroke="#5C5C59" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1" y="9" width="58" height="40" rx="5"/><path d="M1 17h58M1 41h58"/>
+              <path d="M9 9v8M19 9v8M29 9v8M39 9v8M49 9v8M9 41v8M19 41v8M29 41v8M39 41v8M49 41v8"/>
+              <path d="M66 4v20M59 17l7 7 7-7" stroke="#F2F2F0"/>
+            </svg>
+            <div style="font-size:15px;font-weight:600">Drop video, audio or images anywhere</div>
+            <div style="font-size:11.5px;color:#5C5C59">or press ⌘I to import &nbsp;·&nbsp; MP4, MOV, MKV, WebM, WAV, MP3, JPG, PNG</div>
+          </div>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="tc"><span class="now" style="color:#5C5C59">00:00:00:00</span><span class="dur">/ 00:00:00:00</span></div>
+        <div class="keys">
+          <span class="key"><svg width="14" height="12" viewBox="0 0 14 12" fill="currentColor"><rect x="0" y="1" width="2" height="10" rx=".5"/><path d="M13 1v10L3 6z"/></svg></span>
+          <span class="key"><svg width="14" height="12" viewBox="0 0 14 12" fill="currentColor"><path d="M8 1v10L2 6z"/><rect x="10" y="1" width="2" height="10" rx=".5"/></svg></span>
+          <span class="play"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M2 1.5v13l11-6.5z" fill="#0A0A0A"/></svg></span>
+          <span class="key"><svg width="14" height="12" viewBox="0 0 14 12" fill="currentColor"><rect x="2" y="1" width="2" height="10" rx=".5"/><path d="M6 1v10l6-5z"/></svg></span>
+          <span class="key"><svg width="14" height="12" viewBox="0 0 14 12" fill="currentColor"><path d="M1 1v10l10-5z"/><rect x="12" y="1" width="2" height="10" rx=".5"/></svg></span>
+        </div>
+        <div class="right">
+          <span class="key" style="width:28px;height:28px"><svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V5a2 2 0 0 1 2-2h9M11 1l2 2-2 2M13 7v1a2 2 0 0 1-2 2H2M4 12l-2-2 2-2"/></svg></span>
+          <div class="vmeter">
+            <span><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <span class="pill">Fit <svg width="7" height="5" viewBox="0 0 7 5"><path d="M.5 .5l3 3 3-3" stroke="currentColor" fill="none" stroke-width="1.3"/></svg></span>
+          <span class="key" style="width:28px;height:28px"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 5V1h4M12 8v4H8M1 1l4 4M12 12L8 8"/></svg></span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="insp">
+      <div class="ititle"><svg width="16" height="13" viewBox="0 0 16 13" fill="none" stroke="#9A9A96" stroke-width="1.3"><rect x=".65" y=".65" width="14.7" height="11.7" rx="2"/></svg><span class="n">Sequence</span></div>
+      <div class="sec"><div class="h"><span class="lbl">Frame</span></div>
+        <div class="search" style="color:var(--text);justify-content:space-between">1920 × 1080<svg width="8" height="5" viewBox="0 0 8 5"><path d="M.5 .5l3.5 3.5 3.5-3.5" stroke="#9A9A96" fill="none" stroke-width="1.3"/></svg></div>
+        <div style="display:flex;gap:8px;margin-top:8px"><div class="search mono" style="flex:1;justify-content:center;color:var(--text)">1920</div><div class="search mono" style="flex:1;justify-content:center;color:var(--text)">1080</div></div>
+      </div>
+      <div class="sec"><div class="h"><span class="lbl">Frame rate</span></div>
+        <div class="search" style="color:var(--text);justify-content:space-between">30 fps<svg width="8" height="5" viewBox="0 0 8 5"><path d="M.5 .5l3.5 3.5 3.5-3.5" stroke="#9A9A96" fill="none" stroke-width="1.3"/></svg></div>
+        <p style="font-size:10px;color:var(--faint);margin-top:10px;line-height:1.5">Matches the first video you import.</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Timeline -->
+  <div class="tl">
+    <div class="tools">
+      <div class="seg">
+        <span class="on"><svg width="12" height="14" viewBox="0 0 12 14"><path d="M1 1l9.5 6.2-4.2.8 2.3 4.6-1.7.8-2.3-4.6L1.6 11z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></span>
+        <span><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="3.5" cy="10.5" r="2.2"/><circle cx="10.5" cy="10.5" r="2.2"/><path d="M5 9L12 1M9 9L2 1"/></svg></span>
+      </div>
+      <span class="tg">Split</span>
+      <span class="tg" style="opacity:.4">Delete</span>
+      <span class="sp"></span>
+      <span class="tg on" style="background:#2A2A2A">Snap</span>
+      <span class="tg" style="color:#5C5C59">Sticky</span>
+      <span class="tg on" style="background:#2A2A2A">Skim</span>
+      <span class="tg" style="margin-left:8px"><svg width="14" height="10" viewBox="0 0 14 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M1 5h12M4 2L1 5l3 3M10 2l3 3-3 3"/></svg></span>
+    </div>
+
+    <div class="rulerrow">
+      <div class="corner"></div>
+      <div class="ticks">
+        <span style="left:6px">0:00</span><span style="left:126px">0:05</span><span style="left:246px">0:10</span><span style="left:366px">0:15</span><span style="left:486px">0:20</span><span style="left:606px">0:25</span><span style="left:726px">0:30</span><span style="left:846px">0:35</span><span style="left:966px">0:40</span><span style="left:1086px">0:45</span><span style="left:1206px">0:50</span>
+      </div>
+    </div>
+
+    <div class="tracks">
+      <div class="heads">
+        <div class="add">+ Video</div>
+        <div class="head"><span class="t">V2</span><span class="mini"><svg width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1 4s1.8-3 5-3 5 3 5 3-1.8 3-5 3-5-3-5-3z"/><circle cx="6" cy="4" r="1.3" fill="currentColor"/></svg></span><span class="mini"><svg width="9" height="11" viewBox="0 0 9 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="5" width="7" height="5" rx="1"/><path d="M2.5 5V3.5a2 2 0 0 1 4 0"/></svg></span></div>
+        <div class="head"><span class="t">V1</span><span class="mini"><svg width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1 4s1.8-3 5-3 5 3 5 3-1.8 3-5 3-5-3-5-3z"/><circle cx="6" cy="4" r="1.3" fill="currentColor"/></svg></span><span class="mini"><svg width="9" height="11" viewBox="0 0 9 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="5" width="7" height="5" rx="1"/><path d="M2.5 5V3.5a2 2 0 0 1 4 0"/></svg></span></div>
+        <div class="gapband"></div>
+        <div class="head"><span class="t">A1</span><span class="mini">M</span><span class="mini">S</span><span class="mini"><svg width="9" height="11" viewBox="0 0 9 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="5" width="7" height="5" rx="1"/><path d="M2.5 5V3.5a2 2 0 0 1 4 0"/></svg></span><span class="gain">0.0</span><span class="hm"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+        <div class="head"><span class="t">A2</span><span class="mini">M</span><span class="mini">S</span><span class="mini"><svg width="9" height="11" viewBox="0 0 9 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="5" width="7" height="5" rx="1"/><path d="M2.5 5V3.5a2 2 0 0 1 4 0"/></svg></span><span class="gain">0.0</span><span class="hm"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+      </div>
+      <div class="lanes">
+        <div class="add" style="border-bottom:1px solid var(--line);padding:0"></div>
+        <div class="lane alt"></div>
+        <div class="lane"><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;color:#3e3e3c">Drag media here, or double-click it in the library</div></div>
+        <div class="gapband"></div>
+        <div class="lane"></div>
+        <div class="lane alt"></div>
+        <div class="playhead" style="left:4px"></div>
+      </div>
+    </div>
+
+    <div class="zoombar"><div></div><div class="z"><b></b></div></div>
+  </div>
+</div>
+<script>
+function wave(id, n, seed, quiet){
+  const el=document.getElementById(id); let s=seed;
+  for(let i=0;i<n;i++){ s=(s*9301+49297)%233280; let r=s/233280;
+    let env=0.35+0.65*Math.abs(Math.sin(i/9+seed));
+    if(quiet && i>150 && i<330) env*=0.35;
+    const b=document.createElement('i'); b.style.height=Math.max(6,(r*0.7+0.3)*env*100)+'%'; el.appendChild(b);}
+}
+
+</script>
+</body>
+</html>

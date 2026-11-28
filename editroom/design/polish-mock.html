@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editroom polish</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0A0A0A;--panel:#111;--raised:#1A1A1A;--field:#181818;--line:#222;--line2:#2E2E2E;--text:#F2F2F0;--dim:#9A9A96;--faint:#5C5C59;--red:#FF4A1C;--yellow:#F2C14E;
+--mono:"JetBrains Mono",ui-monospace,monospace;--sans:Inter,-apple-system,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#050505;font-family:var(--sans);color:var(--text);-webkit-font-smoothing:antialiased;padding:48px}
+.board{width:1600px;margin:0 auto}
+.top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:28px}
+.top h1{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.top span{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.card{background:var(--panel);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 0 0 1px #1b1b1b;padding:22px;position:relative;overflow:hidden}
+.num{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.num b{width:20px;height:20px;border-radius:50%;border:1px solid var(--line2);font-family:var(--mono);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.num span{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.note{font-size:11.5px;color:var(--faint);line-height:1.55;margin-top:14px;max-width:560px}
+.lbl{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.mono{font-family:var(--mono)}
+
+/* 3 timeline */
+.tl{background:var(--bg);border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px #1b1b1b}
+.ruler{height:30px;position:relative;border-bottom:1px solid var(--line);margin-left:120px}
+.ruler i{position:absolute;bottom:0;width:1px;background:#2a2a2a;height:5px}
+.ruler i.maj{height:10px;background:#3c3c3c}
+.ruler em{position:absolute;top:7px;font-style:normal;font-family:var(--mono);font-size:9.5px;color:#4a4a48;margin-left:5px}
+.rows{position:relative}
+.row{display:flex;height:64px;border-bottom:1px solid var(--line)}
+.row.alt{background:#0D0D0D}
+.hd{width:120px;flex:none;background:var(--panel);border-right:1px solid var(--line);display:flex;align-items:center;gap:6px;padding:0 12px}
+.hd .t{font-family:var(--mono);font-size:11px;font-weight:500;width:22px}
+.key{font-size:10px;font-weight:700;width:20px;height:20px;border-radius:5px;background:var(--field);display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.key.on{background:var(--text);color:#0A0A0A}
+.lane{position:relative;flex:1}
+.clip{position:absolute;top:6px;bottom:6px;border-radius:8px;overflow:hidden;background:#1E1E1E;box-shadow:inset 0 0 0 1px #2c2c2c}
+.clip.sel{box-shadow:inset 0 0 0 1.5px var(--text)}
+.clip .nm{position:absolute;left:8px;top:6px;font-size:10.5px;font-weight:600;z-index:3;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.sheet{position:absolute;inset:0;display:flex;gap:1px;background:#0b0b0b;padding:0}
+.sheet div{width:92px;flex:none;position:relative;overflow:hidden}
+.clip .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.5),rgba(0,0,0,0) 40%);z-index:2}
+.ph1{background:linear-gradient(180deg,#7f93a5 0%,#b9c4ca 48%,#d9d6cd 60%)}
+.ph1::before{content:"";position:absolute;left:0;right:0;top:26%;height:42%;background:linear-gradient(180deg,#56636b,#3d474c);clip-path:polygon(0 72%,10% 44%,19% 58%,33% 8%,45% 46%,56% 30%,67% 56%,80% 18%,91% 40%,100% 30%,100% 100%,0 100%)}
+.ph1::after{content:"";position:absolute;left:0;right:0;bottom:0;height:36%;background:linear-gradient(180deg,#45503f,#1c2019)}
+.ph2{background:linear-gradient(180deg,#e9d7c2 0%,#d7a77e 45%,#8a5a3c 46%,#2a1d16 100%)}
+.aclip{background:#141414}
+.wave{position:absolute;left:6px;top:20px;width:calc(100% - 12px);height:calc(100% - 26px)}
+.gain{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,.55);z-index:2}
+.playhead{position:absolute;top:-30px;bottom:0;width:1.5px;background:var(--red);z-index:9}
+.flag{position:absolute;top:0;left:-7px;width:15px;height:13px;background:var(--red);clip-path:polygon(0 0,100% 0,100% 60%,50% 100%,0 60%)}
+.bubble{position:absolute;top:1px;left:12px;background:var(--red);color:#fff;font-family:var(--mono);font-size:10px;font-weight:500;padding:2px 6px;border-radius:4px;white-space:nowrap}
+.snap{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.85);z-index:8}
+.snapdot{position:absolute;width:7px;height:7px;border-radius:50%;background:#fff;left:-3px}
+.callouts{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px}
+.co{border-top:1px solid var(--line2);padding-top:10px}
+.co b{display:block;font-size:11.5px;font-weight:600;margin-bottom:4px}
+.co p{font-size:11px;color:var(--faint);line-height:1.5}
+
+/* 1 type */
+.spec{display:flex;flex-direction:column;gap:16px}
+.srow{display:grid;grid-template-columns:70px 1fr;align-items:baseline;gap:16px;border-bottom:1px solid var(--line);padding-bottom:14px}
+.srow .k{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.t20{font-family:var(--mono);font-size:20px;font-weight:500;letter-spacing:.02em}
+.t13{font-size:13px;font-weight:600}
+.t115{font-size:11.5px;color:var(--dim)}
+.t10{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.nums{display:flex;gap:18px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+
+/* 2 baselines */
+.heads{display:grid;grid-template-columns:200px 1fr 220px;border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px #1b1b1b;position:relative;background:var(--panel)}
+.heads > div{height:52px;display:flex;align-items:center;padding:0 14px;gap:8px;border-right:1px solid var(--line)}
+.heads > div:last-child{border-right:none}
+.base{position:absolute;left:0;right:0;top:30px;height:1px;background:rgba(255,74,28,.7)}
+.gridov{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 4px);pointer-events:none}
+
+/* 6 empty */
+.empty{height:230px;border-radius:10px;background:#000;box-shadow:inset 0 0 0 1px #1b1b1b,inset 0 10px 30px rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.empty p{font-size:13px;font-weight:500}
+.empty small{font-size:11px;color:var(--faint)}
+
+/* 7 icons */
+.icons{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.ic{height:64px;border-radius:10px;background:var(--bg);box-shadow:0 0 0 1px #1b1b1b;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text)}
+.ic span{font-size:9.5px;color:var(--faint)}
+
+/* 8 depth */
+.depth{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.pan{height:150px;border-radius:10px;background:var(--panel);position:relative}
+.pan.flat{box-shadow:0 0 0 1px #1b1b1b}
+.pan.deep{box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px #1b1b1b}
+.well{position:absolute;left:16px;right:16px;top:16px;bottom:52px;border-radius:6px;background:#000}
+.pan.deep .well{box-shadow:inset 0 2px 10px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.04)}
+.pk{position:absolute;bottom:10px;left:50%;margin-left:-17px;width:34px;height:34px;border-radius:50%;background:var(--text)}
+.pan.deep .pk{box-shadow:0 0 0 4px #161616,0 2px 6px rgba(0,0,0,.6),inset 0 -2px 3px rgba(0,0,0,.18),inset 0 1px 0 #fff}
+.cap2{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-top:10px;text-align:center}
+
+/* 4/5 motion */
+.frames{display:flex;gap:12px;align-items:flex-start}
+.fr{flex:1;background:var(--bg);border-radius:10px;box-shadow:0 0 0 1px #1b1b1b;padding:12px;height:150px;overflow:hidden}
+.fr .h{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:600;letter-spacing:.16em;color:var(--faint)}
+.fr .bar{height:2px;background:#2a2a2a;border-radius:1px;margin-top:12px;position:relative}
+.fr .bar b{position:absolute;left:0;top:0;bottom:0;width:55%;background:var(--text);border-radius:1px}
+.fr .t{font-size:9.5px;color:var(--faint);font-family:var(--mono);margin-top:10px}
+.pad{height:150px;border-radius:12px;background:linear-gradient(180deg,#1b1b1b,#141414);box-shadow:0 0 0 1px #222,inset 0 1px 0 rgba(255,255,255,.05);position:relative;display:flex;align-items:center;justify-content:center}
+.ring{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.35)}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="top"><h1>Polish</h1><span>Editroom · design notes</span></div>
+  <div class="grid">
+
+    <!-- 3 Timeline craft (wide) -->
+    <div class="card" style="grid-column:span 12">
+      <div class="num"><b>3</b><span>Timeline craft</span></div>
+      <div class="tl">
+        <div class="ruler" id="ruler"></div>
+        <div class="rows">
+          <div class="row alt"><div class="hd"><span class="t">V1</span><span class="key"><svg width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1 4s1.8-3 5-3 5 3 5 3-1.8 3-5 3-5-3-5-3z"/><circle cx="6" cy="4" r="1.2" fill="currentColor"/></svg></span><span class="key"><svg width="9" height="11" viewBox="0 0 9 11" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1" y="5" width="7" height="5" rx="1"/><path d="M2.5 5V3.5a2 2 0 0 1 4 0"/></svg></span></div>
+            <div class="lane">
+              <div class="clip" style="left:8px;width:470px"><div class="sheet"><div class="ph2"></div><div class="ph2"></div><div class="ph2"></div><div class="ph2"></div><div class="ph2"></div><div class="ph2"></div></div><div class="shade"></div><span class="nm">Golden hour</span></div>
+              <div class="clip sel" style="left:480px;width:560px"><div class="sheet"><div class="ph1"></div><div class="ph1"></div><div class="ph1"></div><div class="ph1"></div><div class="ph1"></div><div class="ph1"></div><div class="ph1"></div></div><div class="shade"></div><span class="nm">Ridge walk</span></div>
+              <div class="snap" style="left:479px"><span class="snapdot" style="top:2px"></span><span class="snapdot" style="bottom:2px"></span></div>
+            </div>
+          </div>
+          <div class="row"><div class="hd"><span class="t">A1</span><span class="key">M</span><span class="key on">S</span></div>
+            <div class="lane">
+              <div class="clip aclip" style="left:8px;width:1032px"><span class="nm">Ridge walk</span><svg class="wave" id="w1" preserveAspectRatio="none"></svg><span class="gain" style="top:30px"></span></div>
+            </div>
+          </div>
+          <div class="row alt"><div class="hd"><span class="t">A2</span><span class="key">M</span><span class="key">S</span></div>
+            <div class="lane">
+              <div class="clip aclip" style="left:300px;width:1140px"><span class="nm">Score v2</span><svg class="wave" id="w2" preserveAspectRatio="none"></svg><span class="gain" style="top:36px"></span></div>
+            </div>
+          </div>
+          <div class="playhead" style="left:740px"><span class="flag"></span><span class="bubble">00:00:12:06</span></div>
+        </div>
+      </div>
+      <div class="callouts">
+        <div class="co"><b>Mirrored waveforms</b><p>Drawn around a centre line and smoothed, so they read as sound, not a bar chart.</p></div>
+        <div class="co"><b>Contact-sheet filmstrips</b><p>Frames at their true shape with a 1pt gap between them.</p></div>
+        <div class="co"><b>Playhead flag and readout</b><p>A small flag on the ruler; the time shows beside it while dragging.</p></div>
+        <div class="co"><b>Quieter ruler, clear snaps</b><p>Dimmer labels keep clips brightest. A white line with end dots marks a snap.</p></div>
+      </div>
+    </div>
+
+    <!-- 1 Type -->
+    <div class="card" style="grid-column:span 6">
+      <div class="num"><b>1</b><span>Four type sizes</span></div>
+      <div class="spec">
+        <div class="srow"><span class="k">20 mono</span><span class="t20">00:00:12:06</span></div>
+        <div class="srow"><span class="k">13 semi</span><span class="t13">Ridge walk</span></div>
+        <div class="srow"><span class="k">11.5</span><span class="t115">Scale, Fade in, Exposure, 3840 × 2160</span></div>
+        <div class="srow"><span class="k">10 caps</span><span class="t10">Playback · Transform · Color</span></div>
+        <div class="srow" style="border:none;padding:0"><span class="k">figures</span><span class="nums"><span>100%</span><span>−3.0 dB</span><span>0.50s</span><span>1280 × 720</span></span></div>
+      </div>
+      <p class="note">Every number uses the same fixed-width figures, so values don't jitter as they change.</p>
+    </div>
+
+    <!-- 2 Baselines -->
+    <div class="card" style="grid-column:span 6">
+      <div class="num"><b>2</b><span>One grid, one baseline</span></div>
+      <div class="heads">
+        <div><span class="lbl" style="color:var(--dim)">Media</span><span style="flex:1"></span><span style="color:var(--dim);font-size:12px">Aa</span></div>
+        <div><span class="mono" style="font-size:11px;color:var(--dim)">Select</span><span style="flex:1"></span><span style="font-size:11px;color:var(--dim)">Snap</span><span style="font-size:11px;color:var(--text);background:#2a2a2a;padding:4px 9px;border-radius:7px">Skim</span></div>
+        <div><svg width="15" height="12" viewBox="0 0 15 12" fill="none" stroke="#9A9A96" stroke-width="1.3"><rect x=".65" y=".65" width="13.7" height="10.7" rx="2"/></svg><span class="t13">Ridge walk</span></div>
+        <span class="base"></span><span class="gridov"></span>
+      </div>
+      <div style="margin-top:22px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <div style="height:46px;border-radius:8px;background:var(--bg);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;font-family:var(--mono);font-size:10px;color:var(--faint);box-shadow:inset 0 0 0 1px #1b1b1b">4</div>
+        <div style="height:46px;border-radius:8px;background:var(--bg);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;font-family:var(--mono);font-size:10px;color:var(--faint);box-shadow:inset 0 0 0 1px #1b1b1b">8</div>
+        <div style="height:46px;border-radius:8px;background:var(--bg);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;font-family:var(--mono);font-size:10px;color:var(--faint);box-shadow:inset 0 0 0 1px #1b1b1b">12</div>
+        <div style="height:46px;border-radius:8px;background:var(--bg);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;font-family:var(--mono);font-size:10px;color:var(--faint);box-shadow:inset 0 0 0 1px #1b1b1b">16</div>
+      </div>
+      <p class="note">All spacing on a 4pt grid (4, 8, 12, 16). The three panel headers share one height and one baseline, marked here in orange.</p>
+    </div>
+
+    <!-- 6 Empty -->
+    <div class="card" style="grid-column:span 5">
+      <div class="num"><b>6</b><span>A first launch worth seeing</span></div>
+      <div class="empty">
+        <svg width="74" height="54" viewBox="0 0 74 54" fill="none" stroke="#5C5C59" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1" y="9" width="58" height="40" rx="5"/><path d="M1 17h58M1 41h58"/>
+          <path d="M9 9v8M19 9v8M29 9v8M39 9v8M49 9v8M9 41v8M19 41v8M29 41v8M39 41v8M49 41v8"/>
+          <path d="M66 4v20M59 17l7 7 7-7" stroke="#F2F2F0"/>
+        </svg>
+        <p>Drop video, audio or images anywhere</p>
+        <small>or press ⌘I to import</small>
+      </div>
+    </div>
+
+    <!-- 7 Icons -->
+    <div class="card" style="grid-column:span 7">
+      <div class="num"><b>7</b><span>One icon family, 1.3pt line</span></div>
+      <div class="icons">
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 2l10 6.2-4.4.9 2.5 4.4-1.6.9-2.5-4.4L3.6 12z"/></svg><span>Select</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="4" cy="12" r="2.3"/><circle cx="12" cy="12" r="2.3"/><path d="M5.6 10.4L13 2M10.4 10.4L3 2"/></svg><span>Cut</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M3 13L7 3h2l4 10M4.6 9.5h6.8"/></svg><span>Text</span></div>
+        <div class="ic"><svg width="17" height="13" viewBox="0 0 17 13"><rect x=".65" y=".65" width="15.7" height="11.7" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3" y="3" width="11" height="7" rx="1" fill="currentColor"/></svg><span>Solid</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 9.5v3a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5v-3"/></svg><span>Import</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M8 1.5v13M3 5h3M3 11h3M10 5h3M10 11h3"/></svg><span>Split</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg><span>Show</span></div>
+        <div class="ic"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="7" width="11" height="7.5" rx="1.5"/><path d="M4 7V5a3 3 0 0 1 6 0v2"/></svg><span>Lock</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7V6a2.5 2.5 0 0 1 2.5-2.5H13M11 1.5l2 2-2 2M14 9v1a2.5 2.5 0 0 1-2.5 2.5H3M5 14.5l-2-2 2-2"/></svg><span>Loop</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8h13M4.5 5l-3 3 3 3M11.5 5l3 3-3 3"/></svg><span>Fit</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2 6V2h4M14 10v4h-4M2 2l4.5 4.5M14 14l-4.5-4.5"/></svg><span>Full screen</span></div>
+        <div class="ic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9"/></svg><span>Delete</span></div>
+      </div>
+    </div>
+
+    <!-- 4 + 5 motion and touch -->
+    <div class="card" style="grid-column:span 7">
+      <div class="num"><b>4</b><span>Quiet motion · 120 ms</span></div>
+      <div class="frames">
+        <div class="fr"><div class="h">› TRANSFORM</div><div class="t">closed</div></div>
+        <div class="fr" style="opacity:.9"><div class="h">⌄ TRANSFORM</div><div class="bar" style="opacity:.4"><b></b></div><div class="t" style="opacity:.4">opening · 60 ms</div></div>
+        <div class="fr"><div class="h">⌄ TRANSFORM</div><div class="bar"><b></b></div><div class="bar" style="margin-top:18px"><b style="width:48%"></b></div><div class="bar" style="margin-top:18px"><b style="width:40%"></b></div><div class="t">open · 120 ms</div></div>
+      </div>
+      <p class="note">Hover states fade, sections slide open, clips ease into place when dropped. Nothing slower than 120 ms, so it never feels in the way.</p>
+    </div>
+    <div class="card" style="grid-column:span 5">
+      <div class="num"><b>5</b><span>A tap when it snaps</span></div>
+      <div class="pad">
+        <span class="ring" style="width:40px;height:40px"></span>
+        <span class="ring" style="width:76px;height:76px;opacity:.5"></span>
+        <span class="ring" style="width:116px;height:116px;opacity:.22"></span>
+        <span style="width:12px;height:12px;border-radius:50%;background:var(--text);position:relative"></span>
+      </div>
+      <p class="note">The trackpad gives a light tap as a clip or playhead snaps to an edge, like Final Cut.</p>
+    </div>
+
+    <!-- 8 Depth -->
+    <div class="card" style="grid-column:span 12">
+      <div class="num"><b>8</b><span>A hint of depth</span></div>
+      <div class="depth">
+        <div><div class="pan flat"><div class="well"></div><div class="pk"></div></div><div class="cap2">Now · flat</div></div>
+        <div><div class="pan deep"><div class="well"></div><div class="pk"></div></div><div class="cap2">Proposed · 1pt top light, soft well shadow, keyed play button</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+// ruler
+const r=document.getElementById('ruler'); const W=1440;
+for(let x=0;x<W;x+=24){const i=document.createElement('i');i.style.left=x+'px';if(x%120===0){i.className='maj';const e=document.createElement('em');e.style.left=x+'px';e.textContent='0:'+String(x/24).padStart(2,'0');r.appendChild(e);}r.appendChild(i);}
+// mirrored smooth waveforms
+function wave(id,seed,duck){const s=document.getElementById(id);const bb=s.getBoundingClientRect();const w=Math.round(bb.width),h=Math.round(bb.height);s.setAttribute("width",w);s.setAttribute("height",h);s.setAttribute('viewBox',`0 0 ${w} ${h}`);
+let pts=[],v=seed;const n=Math.floor(w/3);
+for(let k=0;k<=n;k++){v=(v*9301+49297)%233280;let rnd=v/233280;let env=.35+.65*Math.abs(Math.sin(k/14+seed));if(duck&&k>n*.18&&k<n*.62)env*=.3;pts.push(Math.min(.95,Math.max(.08,(rnd*.5+.5)*env*1.5)));}
+// smooth
+let sm=pts.map((p,k)=>{let a=pts[k-1]??p,b=pts[k+1]??p;return (a+2*p+b)/4});
+let top='',bot='';sm.forEach((p,k)=>{const x=k*3,y=h/2-p*h/2*0.95;top+=(k?'L':'M')+x+' '+y.toFixed(1)+' '});
+for(let k=sm.length-1;k>=0;k--){const x=k*3,y=h/2+sm[k]*h/2*0.95;bot+='L'+x+' '+y.toFixed(1)+' '}
+s.innerHTML=`<path d="${top}${bot}Z" fill="rgba(220,220,216,.78)"/><line x1="0" y1="${h/2}" x2="${w}" y2="${h/2}" stroke="rgba(0,0,0,.35)" stroke-width="1"/>`;}
+wave('w1',3,false);wave('w2',7,true);
+</script>
+</body>
+</html>

@@ -62,3 +62,10 @@ desktop.ini
 # Audits are working notes for whoever runs them, not part of the source
 audit/
 graphify-out/
+
+# Xcode / Editroom
+xcuserdata/
+*.xcuserstate
+DerivedData/
+editroom/build/
+editroom/dist/
