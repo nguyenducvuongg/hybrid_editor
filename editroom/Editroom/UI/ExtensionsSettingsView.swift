@@ -363,6 +363,8 @@ private struct PluginCard: View {
 struct IntegrationsSettingsView: View {
     @State private var chatPrefs = ChatProviderPrefs.load()
     @State private var comfyPrefs = ComfyConnectionPrefs.load()
+    @State private var speechPrefs = SpeechPrefs.load()
+    @State private var vlmPrefs = VLMIndexPrefs.load()
 
     @State private var geminiKey = (try? AppSecrets.shared.get(.geminiAPIKey)) ?? ""
     @State private var openAIKey = (try? AppSecrets.shared.get(.openAIAPIKey)) ?? ""
@@ -508,6 +510,48 @@ struct IntegrationsSettingsView: View {
                         }
                     }
 
+                    SettingsSection("Smart A-Roll (Whisper Metal) & B-Roll VLM") {
+                        VStack(spacing: 0) {
+                            SettingsRow("Prefer Whisper (whisper-cli)", detail: "Pre-gated by AudioVAD") {
+                                Toggle("", isOn: $speechPrefs.preferWhisper)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                    .controlSize(.small)
+                                    .tint(Theme.accent)
+                            }
+                            Divider().overlay(Theme.stroke)
+                            SettingsRow("Whisper Binary Path") {
+                                TextField("/opt/homebrew/bin/whisper-cli", text: $speechPrefs.whisperBinaryPath)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 240)
+                            }
+                            Divider().overlay(Theme.stroke)
+                            SettingsRow("Whisper GGML Model") {
+                                TextField("ggml-large-v3-turbo.bin", text: $speechPrefs.whisperModelPath)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 240)
+                            }
+                            Divider().overlay(Theme.stroke)
+                            SettingsRow("A-Roll Language") {
+                                TextField("vi", text: $speechPrefs.whisperLanguage)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 120)
+                            }
+                            Divider().overlay(Theme.stroke)
+                            SettingsRow("Local VLM Base URL", detail: "OpenAI-compatible /v1") {
+                                TextField("http://127.0.0.1:11434/v1", text: $vlmPrefs.vlmBaseURL)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 240)
+                            }
+                            Divider().overlay(Theme.stroke)
+                            SettingsRow("Local VLM Model") {
+                                TextField("qwen2.5vl:7b", text: $vlmPrefs.vlmModel)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 240)
+                            }
+                        }
+                    }
+
                     HStack(spacing: 12) {
                         PillButton(title: "Save Keys & Settings", prominent: true) { saveAll() }
                         if let savedBanner {
@@ -545,6 +589,8 @@ struct IntegrationsSettingsView: View {
             try storeSecret(comfyCFSecret, for: .comfyCFClientSecret)
             chatPrefs.save()
             comfyPrefs.save()
+            speechPrefs.save()
+            vlmPrefs.save()
             savedBanner = "Saved securely."
         } catch {
             savedBanner = "Save failed: \(error.localizedDescription)"

@@ -114,3 +114,52 @@ struct ChatProviderPrefs: Codable, Equatable, Sendable {
         }
     }
 }
+
+/// Non-secret Whisper Metal & VAD configuration (`UserDefaults`).
+struct SpeechPrefs: Codable, Equatable, Sendable {
+    var preferWhisper: Bool = true
+    var whisperBinaryPath: String = ""
+    var whisperModelPath: String = ""
+    var whisperLanguage: String = "vi"
+    var vadThresholdDB: Double = -42.0
+    var minSilenceSec: Double = 0.7
+
+    private static let defaultsKey = "speechPrefs"
+
+    static func load(defaults: UserDefaults = .standard) -> SpeechPrefs {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let decoded = try? JSONDecoder().decode(SpeechPrefs.self, from: data) else {
+            return SpeechPrefs()
+        }
+        return decoded
+    }
+
+    func save(defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) {
+            defaults.set(data, forKey: Self.defaultsKey)
+        }
+    }
+}
+
+/// Non-secret Local VLM & B-Roll indexer preferences (`UserDefaults`).
+struct VLMIndexPrefs: Codable, Equatable, Sendable {
+    var vlmBaseURL: String = "http://127.0.0.1:11434/v1"
+    var vlmModel: String = "qwen2.5vl:7b"
+    var sampleIntervalSec: Double = 4.0
+
+    private static let defaultsKey = "vlmIndexPrefs"
+
+    static func load(defaults: UserDefaults = .standard) -> VLMIndexPrefs {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let decoded = try? JSONDecoder().decode(VLMIndexPrefs.self, from: data) else {
+            return VLMIndexPrefs()
+        }
+        return decoded
+    }
+
+    func save(defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) {
+            defaults.set(data, forKey: Self.defaultsKey)
+        }
+    }
+}

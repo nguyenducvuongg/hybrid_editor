@@ -16,7 +16,7 @@ extension MCPTools {
         "history", "auto_edit", "set_marker", "delete_markers", "set_in_out",
         "set_transform", "set_title_style", "freeze_frame", "reverse_clip",
         "detach_audio", "duplicate_clip", "set_track", "add_solid", "set_solid_color",
-        "apply_edl_patch", "comfy_generate", "import_stock_media",
+        "apply_edl_patch", "comfy_generate", "import_stock_media", "insert_broll_overlay",
     ]
 
     static var hybridDefinitions: [[String: Any]] {
@@ -102,6 +102,39 @@ extension MCPTools {
                   "download_url": str("Direct https media URL if not passing stock_id."),
                   "kind": str("photos or videos (when using download_url)."),
                   "title": str("Title/filename label."),
+                  "session_id": str("Optional held lease session_id.")]),
+            tool("transcribe_aroll", "Transcribe A-roll with VAD",
+                 "Detects active speech spans via AudioVAD (preventing silence hallucinations P6), runs Whisper.cpp or Apple Speech, and returns words plus suggested source keep_ranges.",
+                 ["asset_id": str("Optional project asset UUID."),
+                  "clip_id": str("Optional timeline clip UUID."),
+                  "path": str("Optional local media file path."),
+                  "language": str("Language code (default vi)."),
+                  "min_silence_sec": num("Minimum silence gap to split cuts (default 0.7)."),
+                  "pad_sec": num("Padding added around speech segments (default 0.1)."),
+                  "vad_threshold_db": num("Optional VAD RMS threshold in dBFS (default -42).")],
+                 readOnly: true),
+            tool("index_broll_folder", "Index local B-roll folder",
+                 "Extracts keyframes from a local B-roll folder off the main thread, describes them via Local VLM (or Apple Vision fallback), and updates the persistent SQLite3 FTS5 index.",
+                 ["folder_path": str("Local directory path containing B-roll videos/images."),
+                  "sample_interval_sec": num("Keyframe sampling interval in seconds (default 4.0)."),
+                  "vlm_base_url": str("Optional OpenAI-compatible VLM base URL override."),
+                  "vlm_model": str("Optional VLM model ID override."),
+                  "use_apple_vision": ["type": "boolean", "description": "Use offline Apple Vision classifier directly (default false)."]],
+                 required: ["folder_path"]),
+            tool("search_broll", "Search local B-roll index",
+                 "Searches the persistent SQLite3 FTS5 B-roll index (supports accented & unaccented Vietnamese + English) ranked by BM25, returning fallback_tier=2 when empty.",
+                 ["query": str("Vietnamese or English scene/mood search query."),
+                  "limit": ["type": "integer", "description": "Max hits to return (1...25, default 6)."]],
+                 required: ["query"], readOnly: true),
+            tool("insert_broll_overlay", "Insert B-roll overlay",
+                 "Imports (if needed) and places a B-roll image/video overlay muted on V2+ inside the active AgentTurn (`I1`).",
+                 ["asset_path": str("Local media path to import and overlay."),
+                  "asset_id": str("Existing project asset UUID if already imported."),
+                  "timeline_start": num("Timeline start position in seconds (default 0)."),
+                  "source_start": num("Source in-point in seconds (default 0)."),
+                  "duration": num("Overlay duration in seconds."),
+                  "mute_audio": ["type": "boolean", "description": "Mute B-roll audio track (default true)."],
+                  "track": str("Optional target video track name (defaults to free V2+)."),
                   "session_id": str("Optional held lease session_id.")]),
         ]
     }
@@ -461,6 +494,197 @@ extension MCPTools {
                 "licence": item.licence,
             ])
 
+        case "transcribe_aroll":
+            let p0 = draft?.project ?? model.project
+            let resolvedURL: URL
+            if let path = args["path"] as? String, !path.isEmpty {
+                resolvedURL = URL(fileURLWithPath: path)
+            } else if let cidStr = args["clip_id"] as? String,
+                      let cid = UUID(uuidString: cidStr),
+                      let clip = p0.clips.first(where: { $0.id == cid }),
+                      let aid = clip.assetID,
+                      let asset = p0.assets.first(where: { $0.id == aid }) {
+                resolvedURL = URL(fileURLWithPath: asset.path)
+            } else if let aidStr = args["asset_id"] as? String,
+                      let aid = UUID(uuidString: aidStr),
+                      let asset = p0.assets.first(where: { $0.id == aid }) {
+                resolvedURL = URL(fileURLWithPath: asset.path)
+            } else {
+                throw MCPToolError("Provide `path`, `clip_id`, or `asset_id` pointing to a valid media file.")
+            }
+            guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+                throw MCPToolError("Media file does not exist: \(resolvedURL.path)")
+            }
+
+            let prefs = SpeechPrefs.load()
+            let lang = ((args["language"] as? String)?.isEmpty == false ? (args["language"] as? String) : nil) ?? prefs.whisperLanguage
+            let minSilence = max(0.2, double(args["min_silence_sec"]) ?? prefs.minSilenceSec)
+            let padSec = max(0.0, double(args["pad_sec"]) ?? 0.1)
+            let thresholdDB = double(args["vad_threshold_db"]) ?? prefs.vadThresholdDB
+
+            let vad = try await AudioVAD.analyze(url: resolvedURL, thresholdDB: thresholdDB)
+            let whisper = WhisperCPPProvider.fromPrefs(prefs)
+            var providerName = "vad-only"
+            var transcript = Transcript(words: [], language: lang)
+
+            if !vad.spans.isEmpty {
+                if prefs.preferWhisper, whisper.isConfigured {
+                    let configured = WhisperCPPProvider(
+                        binaryURL: whisper.binaryURL,
+                        modelURL: whisper.modelURL,
+                        vadThresholdDB: thresholdDB
+                    )
+                    transcript = try await configured.transcribe(audioURL: resolvedURL, language: lang)
+                    providerName = "whisper.cpp"
+                } else if let apple = await Transcripts.shared.ready(resolvedURL, limit: 60) {
+                    let filteredWords = apple.words.filter { w in
+                        !AudioVAD.isHallucination(w.text)
+                            && vad.spans.contains { $0.end >= w.start - 0.25 && $0.start <= w.end + 0.25 }
+                    }
+                    transcript = Transcript(words: filteredWords, language: apple.language)
+                    providerName = "apple-speech"
+                }
+            }
+
+            let keepRanges = AudioVAD.suggestKeepRanges(
+                words: transcript.words,
+                spans: vad.spans,
+                duration: vad.duration,
+                minSilenceSec: minSilence,
+                padSec: padSec
+            )
+            return json([
+                "provider": providerName,
+                "language": transcript.language,
+                "duration": round(vad.duration * 1000) / 1000,
+                "vad_peak_db": round(vad.peakDB * 10) / 10,
+                "speech_spans": vad.spans.map { ["start": round($0.start * 1000) / 1000, "end": round($0.end * 1000) / 1000] },
+                "word_count": transcript.words.count,
+                "text": transcript.text,
+                "words": transcript.words.map { [
+                    "start": round($0.start * 1000) / 1000,
+                    "end": round($0.end * 1000) / 1000,
+                    "text": $0.text,
+                ] },
+                "suggested_keep_ranges": keepRanges.map { [
+                    "start": round($0.start * 1000) / 1000,
+                    "end": round($0.end * 1000) / 1000,
+                ] },
+            ])
+
+        case "index_broll_folder":
+            guard let folderPath = args["folder_path"] as? String, !folderPath.isEmpty else {
+                throw MCPToolError("folder_path is required.")
+            }
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folderPath, isDirectory: &isDir), isDir.boolValue else {
+                throw MCPToolError("Folder does not exist: \(folderPath)")
+            }
+            let folderURL = URL(fileURLWithPath: folderPath, isDirectory: true)
+            let vlmPrefs = VLMIndexPrefs.load()
+            let interval = double(args["sample_interval_sec"]) ?? vlmPrefs.sampleIntervalSec
+            let useApple = (args["use_apple_vision"] as? Bool) ?? false
+            let baseURL = (args["vlm_base_url"] as? String) ?? vlmPrefs.vlmBaseURL
+            let modelID = (args["vlm_model"] as? String) ?? vlmPrefs.vlmModel
+
+            let primary: any VisualIndexProvider = useApple
+                ? AppleVisionFallbackProvider()
+                : LocalVLMVisionProvider(baseURL: baseURL, model: modelID)
+            let fallback: (any VisualIndexProvider)? = useApple ? nil : AppleVisionFallbackProvider()
+
+            let index = try BRollFTSIndex()
+            let stats = try await BRollIndexer().indexFolder(
+                folderURL,
+                index: index,
+                provider: primary,
+                fallbackProvider: fallback,
+                sampleIntervalSec: interval
+            )
+            let total = try index.count()
+            return json([
+                "folder_path": folderURL.path,
+                "indexed_files": stats.files,
+                "indexed_segments": stats.segments,
+                "total_segments": total,
+                "provider": stats.usedProvider,
+            ])
+
+        case "search_broll":
+            guard let query = args["query"] as? String, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MCPToolError("query is required.")
+            }
+            let limit = max(1, min(25, (args["limit"] as? Int) ?? 6))
+            let index = try BRollFTSIndex()
+            let hits = try index.search(query: query, limit: limit)
+            let fallbackTier = hits.isEmpty ? 2 : 1
+            let hint = hits.isEmpty
+                ? "No local B-roll matched '\(query)'. Proceed to Tier 2 (search_stock_media + import_stock_media) or Tier 3 (comfy_generate)."
+                : "Local B-roll match found (Tier 1). Place best candidate via insert_broll_overlay."
+            return json([
+                "query": query,
+                "count": hits.count,
+                "fallback_tier": fallbackTier,
+                "fallback_hint": hint,
+                "hits": hits.map { hit in
+                    [
+                        "asset_path": hit.assetPath,
+                        "asset_name": hit.assetName,
+                        "start_sec": hit.startSec,
+                        "end_sec": hit.endSec,
+                        "description": hit.description,
+                        "tags": hit.tags,
+                        "mood": hit.mood,
+                        "score": hit.score,
+                    ] as [String: Any]
+                },
+            ])
+
+        case "insert_broll_overlay":
+            let p0 = draft?.project ?? model.project
+            let resolvedAsset: MediaAsset
+            if let aidStr = args["asset_id"] as? String, !aidStr.isEmpty {
+                guard let aid = UUID(uuidString: aidStr),
+                      let existing = p0.assets.first(where: { $0.id == aid }) else {
+                    throw MCPToolError("Unknown asset_id '\(aidStr)'.")
+                }
+                resolvedAsset = existing
+            } else if let rawPath = args["asset_path"] as? String, !rawPath.isEmpty {
+                let url = URL(fileURLWithPath: rawPath).standardizedFileURL
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    throw MCPToolError("asset_path does not exist: \(rawPath)")
+                }
+                if let existing = p0.assets.first(where: { URL(fileURLWithPath: $0.path).standardizedFileURL == url }) {
+                    resolvedAsset = existing
+                } else {
+                    resolvedAsset = try await importExternalMediaFile(url, into: model, draft: draft)
+                }
+            } else {
+                throw MCPToolError("Provide either `asset_path` or `asset_id`.")
+            }
+
+            var previewProject = draft?.project ?? model.project
+            var previewTouched: [UUID] = []
+            let placement = try Self.insertOverlayClip(asset: resolvedAsset, opDict: args, in: &previewProject, touchedIds: &previewTouched)
+
+            var committedTouched: [UUID] = []
+            try await perform([.change(nil, "Insert B-roll overlay") { q in
+                var ids: [UUID] = []
+                _ = try? Self.insertOverlayClip(asset: resolvedAsset, opDict: args, in: &q, touchedIds: &ids)
+                committedTouched = ids
+            }], model, who, draft)
+            let after = draft?.project ?? model.project
+            let insertedIds = committedTouched.isEmpty ? previewTouched : committedTouched
+            return json([
+                "inserted_clip_ids": insertedIds.map(\.uuidString),
+                "asset_id": resolvedAsset.id.uuidString,
+                "track": placement.trackName,
+                "timeline_start": placement.start,
+                "duration": placement.duration,
+                "mute_audio": (args["mute_audio"] as? Bool) ?? true,
+                "revision": Int(model.revision),
+                "duration_total": round(after.duration * 1000) / 1000,
+            ])
+
         default:
             return nil
         }
@@ -534,62 +758,72 @@ extension MCPTools {
 
             case "insert_overlay":
                 let asset = try assetArg(opDict, q)
-                let tStart = q.snapFrame(max(0, (double(opDict["timeline_start"]) ?? double(opDict["start"]) ?? 0)))
-                let srcStart = max(0, double(opDict["source_start"]) ?? 0)
-                guard asset.kind == .image || srcStart < asset.duration - 0.05 else {
-                    throw MCPToolError("source_start is past end of \(asset.name).")
-                }
-                let rest = asset.kind == .image ? 5.0 : asset.duration - srcStart
-                let len = q.snapFrame(max(1 / q.fps, min(double(opDict["duration"]) ?? rest, asset.kind == .image ? 3600 : rest)))
-                let muteAudio = (opDict["mute_audio"] as? Bool) ?? true
-
-                if asset.kind == .audio {
-                    let trackId: UUID
-                    if let tn = opDict["track"] as? String {
-                        trackId = try trackArg(tn, q, kind: .audio)
-                    } else if let free = q.freeTrack(.audio, start: tStart, duration: len) {
-                        trackId = free
-                    } else {
-                        trackId = q.addTrack(.audio)
-                    }
-                    var clip = Clip(trackID: trackId, kind: .audio, assetID: asset.id, start: tStart, duration: len, sourceStart: srcStart)
-                    if muteAudio { clip.gainDB = -60 }
-                    q.clips.append(clip)
-                    q.resolveOverlaps(keeping: [clip.id])
-                    touchedIds.append(clip.id)
-                } else {
-                    let trackId: UUID
-                    if let tn = opDict["track"] as? String {
-                        trackId = try trackArg(tn, q, kind: .video)
-                    } else if let free = q.videoTracks.dropFirst().first(where: { t in
-                        !t.locked && !q.clips.contains { $0.trackID == t.id && $0.start < tStart + len - 1e-6 && $0.end > tStart + 1e-6 }
-                    }) {
-                        trackId = free.id
-                    } else {
-                        trackId = q.addTrack(.video)
-                    }
-                    var vClip = Clip(trackID: trackId, kind: asset.kind == .image ? .image : .video, assetID: asset.id,
-                                     start: tStart, duration: len, sourceStart: asset.kind == .image ? 0 : srcStart)
-                    var keeping: Set<UUID> = [vClip.id]
-                    if !muteAudio, asset.kind == .video, asset.hasAudio {
-                        let aTrack = q.freeTrack(.audio, start: tStart, duration: len) ?? q.addTrack(.audio)
-                        let link = UUID()
-                        vClip.linkID = link
-                        var aClip = Clip(trackID: aTrack, kind: .audio, assetID: asset.id,
-                                         start: tStart, duration: len, sourceStart: srcStart)
-                        aClip.linkID = link
-                        q.clips.append(aClip)
-                        keeping.insert(aClip.id)
-                        touchedIds.append(aClip.id)
-                    }
-                    q.clips.append(vClip)
-                    q.resolveOverlaps(keeping: keeping)
-                    touchedIds.append(vClip.id)
-                }
+                _ = try Self.insertOverlayClip(asset: asset, opDict: opDict, in: &q, touchedIds: &touchedIds)
 
             default:
                 throw MCPToolError("Unsupported EDL operation '\(op)'.")
             }
+        }
+    }
+
+    @discardableResult
+    private static func insertOverlayClip(asset: MediaAsset, opDict: [String: Any], in q: inout Project,
+                                          touchedIds: inout [UUID]) throws -> (trackName: String, start: Double, duration: Double) {
+        let tStart = q.snapFrame(max(0, (double(opDict["timeline_start"]) ?? double(opDict["start"]) ?? 0)))
+        let srcStart = max(0, double(opDict["source_start"]) ?? 0)
+        guard asset.kind == .image || srcStart < asset.duration - 0.05 else {
+            throw MCPToolError("source_start is past end of \(asset.name).")
+        }
+        let rest = asset.kind == .image ? 5.0 : asset.duration - srcStart
+        let len = q.snapFrame(max(1 / q.fps, min(double(opDict["duration"]) ?? rest, asset.kind == .image ? 3600 : rest)))
+        let muteAudio = (opDict["mute_audio"] as? Bool) ?? true
+
+        if asset.kind == .audio {
+            let trackId: UUID
+            if let tn = opDict["track"] as? String {
+                trackId = try trackArg(tn, q, kind: .audio)
+            } else if let free = q.freeTrack(.audio, start: tStart, duration: len) {
+                trackId = free
+            } else {
+                trackId = q.addTrack(.audio)
+            }
+            var clip = Clip(trackID: trackId, kind: .audio, assetID: asset.id, start: tStart, duration: len, sourceStart: srcStart)
+            if muteAudio { clip.gainDB = -60 }
+            q.clips.append(clip)
+            q.resolveOverlaps(keeping: [clip.id])
+            touchedIds.append(clip.id)
+            let aIdx = q.audioTracks.firstIndex { $0.id == trackId } ?? 0
+            return ("A\(aIdx + 1)", tStart, len)
+        } else {
+            let trackId: UUID
+            if let tn = opDict["track"] as? String {
+                trackId = try trackArg(tn, q, kind: .video)
+            } else if let free = q.videoTracks.dropFirst().first(where: { t in
+                !t.locked && !q.clips.contains { $0.trackID == t.id && $0.start < tStart + len - 1e-6 && $0.end > tStart + 1e-6 }
+            }) {
+                trackId = free.id
+            } else {
+                trackId = q.addTrack(.video)
+            }
+            var vClip = Clip(trackID: trackId, kind: asset.kind == .image ? .image : .video, assetID: asset.id,
+                             start: tStart, duration: len, sourceStart: asset.kind == .image ? 0 : srcStart)
+            var keeping: Set<UUID> = [vClip.id]
+            if !muteAudio, asset.kind == .video, asset.hasAudio {
+                let aTrack = q.freeTrack(.audio, start: tStart, duration: len) ?? q.addTrack(.audio)
+                let link = UUID()
+                vClip.linkID = link
+                var aClip = Clip(trackID: aTrack, kind: .audio, assetID: asset.id,
+                                 start: tStart, duration: len, sourceStart: srcStart)
+                aClip.linkID = link
+                q.clips.append(aClip)
+                keeping.insert(aClip.id)
+                touchedIds.append(aClip.id)
+            }
+            q.clips.append(vClip)
+            q.resolveOverlaps(keeping: keeping)
+            touchedIds.append(vClip.id)
+            let vIdx = q.videoTracks.firstIndex { $0.id == trackId } ?? 1
+            return ("V\(vIdx + 1)", tStart, len)
         }
     }
 

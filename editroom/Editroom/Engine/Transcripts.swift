@@ -7,8 +7,8 @@ import Speech
 /// What's said in a file: each word with its time in the file. Made once per file on this Mac (Apple's
 /// on-device speech recognition), in the background after import, and kept on disk, so Magic and Media
 /// search can use it at once and nothing is sent anywhere.
-struct Transcript: Codable, Equatable {
-    struct Word: Codable, Equatable {
+struct Transcript: Codable, Equatable, Sendable {
+    struct Word: Codable, Equatable, Sendable {
         var start: Double
         var end: Double
         var text: String
@@ -180,8 +180,9 @@ final class Transcripts: ObservableObject {
         if working == url { stale.insert(url.path) }
     }
 
-    /// Speech recognition on this Mac needs macOS 26.
+    /// Speech recognition on this Mac works via Whisper.cpp or macOS 26 Apple Speech.
     static var available: Bool {
+        if WhisperCPPProvider.fromPrefs().isConfigured { return true }
         if #available(macOS 26, *) { return true }
         return false
     }
@@ -296,6 +297,13 @@ final class Transcripts: ObservableObject {
 
     /// Every word in the file's sound, with its time, in the speech language. Empty if nothing's said.
     nonisolated static func transcribe(_ url: URL) async -> Heard {
+        let prefs = SpeechPrefs.load()
+        if prefs.preferWhisper {
+            let whisper = WhisperCPPProvider.fromPrefs(prefs)
+            if whisper.isConfigured, let t = try? await whisper.transcribe(audioURL: url, language: prefs.whisperLanguage) {
+                return .heard(t)
+            }
+        }
         #if canImport(Speech)
         if #available(macOS 26, *) {
             let language = await resolve()
