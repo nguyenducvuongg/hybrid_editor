@@ -61,7 +61,7 @@ final class MCPServer: ObservableObject {
                         let s = MCPServer.shared
                         s.running = true
                         s.listeningPort = s.listener?.port?.rawValue
-                        s.problem = number == 0 ? "Another copy of Editroom is answering AI apps; this one only runs its own Magic." : nil
+                        s.problem = number == 0 ? "Another copy of Hybrid Editor is answering AI apps; this one only runs its own AI tasks." : nil
                     case .failed(let e):
                         let s = MCPServer.shared
                         s.running = false
@@ -160,7 +160,7 @@ final class MCPServer: ObservableObject {
         // The Claude app, disconnected in Editroom's Settings: say so instead of working.
         if req.headers["x-editroom-from"] == "claude-app", AgentConnect.shared.claudeAppOff {
             guard json["id"] != nil else { return send("202 Accepted") }
-            let err = Self.error(json["id"], -32001, "Editroom is disconnected from Claude. To use it again, connect Claude in Editroom > Settings > Magic.")
+            let err = Self.error(json["id"], -32001, "Hybrid Editor is disconnected from Claude. To use it again, connect Claude in Hybrid Editor > Settings > AI & MCP.")
             return send("200 OK", (try? JSONSerialization.data(withJSONObject: err)) ?? Data(), headers: ["Content-Type": "application/json"])
         }
         var session = req.headers["mcp-session-id"]
@@ -281,7 +281,7 @@ enum MCPHandler {
             return ok([
                 "protocolVersion": versions.contains(asked) ? asked : versions[0],
                 "capabilities": ["tools": ["listChanged": false]],
-                "serverInfo": ["name": "editroom", "title": "Editroom", "version": "1.0"],
+                "serverInfo": ["name": "editroom", "title": "Hybrid Editor", "version": "2.0"],
                 "instructions": MCPTools.instructions,
             ])
         case "ping":
@@ -324,7 +324,7 @@ enum MCPHandler {
                 guard draft != nil else { return ok(MCPTools.failure("This Magic edit was stopped or has finished. Stop now.")) }
             }
             guard let model = draft?.model ?? MCPServer.shared.model else {
-                return ok(MCPTools.failure("Editroom isn't ready yet."))
+                return ok(MCPTools.failure("Hybrid Editor isn't ready yet."))
             }
             if token == nil {
                 if !MCPTools.hybridLifecycleTools.contains(name),

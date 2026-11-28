@@ -61,12 +61,13 @@ mkdir -p "$STAGE"
 cp -R "$APP_PATH" "$STAGE/$APP_NAME.app"
 ln -s /Applications "$STAGE/Applications"
 
-DMG_NAME="$APP_NAME-$VERSION.dmg"
+DMG_NAME="Hybrid-Editor-$VERSION.dmg"
+VOL_NAME="Hybrid Editor"
 DMG_PATH="$OUT_DIR/$DMG_NAME"
 rm -f "$DMG_PATH" "$DMG_PATH.sha256"
 
 echo "==> Creating DMG $DMG_PATH..."
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
+hdiutil create -volname "$VOL_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
 hdiutil verify "$DMG_PATH" >/dev/null
 
 SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
@@ -88,7 +89,7 @@ cat > "$APPCAST_PATH" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Hybrid Editor ($APP_NAME)</title>
+    <title>Hybrid Editor</title>
     <item>
       <title>Version $VERSION</title>
       <pubDate>$PUB_DATE</pubDate>

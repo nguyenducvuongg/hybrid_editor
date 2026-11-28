@@ -74,6 +74,7 @@ struct ChatThread: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum AgentProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    case antigravity
     case claudeCLI
     case codexCLI
     case geminiAPI
@@ -122,12 +123,17 @@ protocol AgentProvider: Sendable {
     var id: String { get }
     var displayName: String { get }
     var kind: AgentProviderKind { get }
+    var usesExternalMCP: Bool { get }
 
     func runTurn(
         _ request: AgentRequest,
         toolExecutor: @escaping @Sendable (String, [String: Any]) async throws -> [[String: Any]],
         onEvent: @escaping @Sendable (AgentStreamEvent) -> Void
     ) async throws -> String
+}
+
+extension AgentProvider {
+    var usesExternalMCP: Bool { false }
 }
 
 struct ToolImageAttachment: Equatable, Sendable {
@@ -522,18 +528,54 @@ final class GeminiHTTPProvider: AgentProvider, @unchecked Sendable {
     }
 }
 
-/// Runs local CLI agent binaries (`claude` / `codex`) off `@MainActor` (`I6`).
+/// Runs local CLI agent binaries (`agy` Antigravity 2.0 / `claude` / `codex`) off `@MainActor` (`I6`).
 final class CLIProcessAgentProvider: AgentProvider, @unchecked Sendable {
     let id: String
     let displayName: String
     let kind: AgentProviderKind
+    let usesExternalMCP: Bool = true
     private let cliPathProvider: @Sendable () async -> URL?
+    private let mcpEndpoint: String
 
-    init(kind: AgentProviderKind, cliPathProvider: @escaping @Sendable () async -> URL?) {
+    init(
+        kind: AgentProviderKind,
+        mcpEndpoint: String? = nil,
+        cliPathProvider: @escaping @Sendable () async -> URL?
+    ) {
         self.id = kind.rawValue
-        self.displayName = kind == .claudeCLI ? "Claude Code CLI" : "Codex CLI"
+        switch kind {
+        case .antigravity: self.displayName = "Antigravity 2.0"
+        case .claudeCLI: self.displayName = "Claude Code CLI"
+        case .codexCLI: self.displayName = "Codex CLI"
+        default: self.displayName = kind.rawValue
+        }
         self.kind = kind
+        self.mcpEndpoint = mcpEndpoint ?? MCPServer.endpoint
         self.cliPathProvider = cliPathProvider
+    }
+
+    private final class ProcessState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var proc: Process?
+        private var buf = Data()
+
+        func setProcess(_ p: Process?) {
+            lock.lock(); proc = p; lock.unlock()
+        }
+
+        func terminate() {
+            lock.lock(); let p = proc; lock.unlock()
+            p?.terminate()
+        }
+
+        func append(_ data: Data) {
+            lock.lock(); buf.append(data); lock.unlock()
+        }
+
+        func text() -> String {
+            lock.lock(); let d = buf; lock.unlock()
+            return String(data: d, encoding: .utf8) ?? ""
+        }
     }
 
     func runTurn(
@@ -542,6 +584,11 @@ final class CLIProcessAgentProvider: AgentProvider, @unchecked Sendable {
         onEvent: @escaping @Sendable (AgentStreamEvent) -> Void
     ) async throws -> String {
         guard let cliURL = await cliPathProvider() else {
+            if kind == .antigravity {
+                throw AgentProviderError.cliUnavailable(
+                    "Antigravity 2.0 CLI (`agy`) was not found. Install Antigravity or connect in Settings > AI & MCP."
+                )
+            }
             throw AgentProviderError.cliUnavailable("\(displayName) executable was not found on this Mac.")
         }
         onEvent(.status("Running \(displayName)…"))
@@ -551,7 +598,13 @@ final class CLIProcessAgentProvider: AgentProvider, @unchecked Sendable {
             let who = msg.role == .assistant ? "Assistant" : "User"
             return "\(who): \(msg.text)"
         }.joined(separator: "\n")
-        let mcpNote = "Editroom MCP HTTP endpoint: \(MCPServer.endpoint)"
+
+        let mcpNote = """
+        Hybrid Editor live MCP endpoint: \(mcpEndpoint) (server name: "editroom").
+        IMPORTANT: Edit the currently open Hybrid Editor timeline EXCLUSIVELY through the `editroom` MCP tools \
+        (start with `get_project` and `list_media`, wrap multi-step edits with `agent_turn` / `begin_turn` + `commit_turn` if modifying directly, or direct edit tools). \
+        Do NOT inspect or modify application source files on disk.
+        """
         let promptPayload = [
             request.systemPrompt,
             mcpNote,
@@ -560,35 +613,90 @@ final class CLIProcessAgentProvider: AgentProvider, @unchecked Sendable {
         ]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        let args = kind == .claudeCLI
-            ? ["-p", promptPayload, "--output-format", "text"]
-            : ["exec", promptPayload]
 
-        let (status, stdout): (Int32, String) = try await withCheckedThrowingContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let p = Process()
-                p.executableURL = cliURL
-                p.arguments = args
-                p.currentDirectoryURL = HybridStorage.subdir("Magic")
-                p.standardInput = FileHandle.nullDevice
-                let pipe = Pipe()
-                p.standardOutput = pipe
-                p.standardError = pipe
-                do {
-                    try p.run()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    p.waitUntilExit()
-                    cont.resume(returning: (p.terminationStatus, String(data: data, encoding: .utf8) ?? ""))
-                } catch {
-                    cont.resume(throwing: error)
+        let args: [String]
+        switch kind {
+        case .antigravity:
+            var a = [
+                "--print",
+                "--output-format", "text",
+                "--mode", "auto",
+                "--dangerously-skip-permissions",
+            ]
+            let modelId = request.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !modelId.isEmpty, modelId.lowercased() != "auto" {
+                a += ["--model", modelId]
+            }
+            a.append(promptPayload)
+            args = a
+        case .claudeCLI:
+            args = ["-p", promptPayload, "--output-format", "text"]
+        default:
+            args = ["exec", promptPayload]
+        }
+
+        let state = ProcessState()
+        let (status, stdout): (Int32, String) = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let p = Process()
+                    p.executableURL = cliURL
+                    p.arguments = args
+                    p.currentDirectoryURL = HybridStorage.subdir("Magic")
+                    var env = ProcessInfo.processInfo.environment
+                    env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+                    p.environment = env
+                    p.standardInput = FileHandle.nullDevice
+
+                    let outPipe = Pipe()
+                    let errPipe = Pipe()
+                    p.standardOutput = outPipe
+                    p.standardError = errPipe
+
+                    outPipe.fileHandleForReading.readabilityHandler = { handle in
+                        let chunk = handle.availableData
+                        if chunk.isEmpty {
+                            handle.readabilityHandler = nil
+                            return
+                        }
+                        state.append(chunk)
+                        if let str = String(data: chunk, encoding: .utf8), !str.isEmpty {
+                            onEvent(.textDelta(str))
+                        }
+                    }
+
+                    state.setProcess(p)
+                    do {
+                        try p.run()
+                        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                        p.waitUntilExit()
+                        outPipe.fileHandleForReading.readabilityHandler = nil
+                        let remaining = outPipe.fileHandleForReading.readDataToEndOfFile()
+                        if !remaining.isEmpty {
+                            state.append(remaining)
+                            if let str = String(data: remaining, encoding: .utf8), !str.isEmpty {
+                                onEvent(.textDelta(str))
+                            }
+                        }
+                        let combinedOut = state.text()
+                        let finalText = combinedOut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? (String(data: errData, encoding: .utf8) ?? "")
+                            : combinedOut
+                        cont.resume(returning: (p.terminationStatus, finalText))
+                    } catch {
+                        outPipe.fileHandleForReading.readabilityHandler = nil
+                        cont.resume(throwing: error)
+                    }
                 }
             }
+        } onCancel: {
+            state.terminate()
         }
+
+        try Task.checkCancellation()
         guard status == 0 else {
-            throw AgentProviderError.cliUnavailable("\(displayName) exited \(status): \(stdout.prefix(240))")
+            throw AgentProviderError.cliUnavailable("\(displayName) exited \(status): \(SecretRedactor.redact(String(stdout.prefix(240))))")
         }
-        let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { onEvent(.textDelta(trimmed)) }
-        return trimmed
+        return stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

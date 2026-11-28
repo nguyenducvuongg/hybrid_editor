@@ -6,7 +6,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Editroom Project</string>
+			<string>Hybrid Editor Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -48,13 +48,13 @@
 				<string>public.content</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Editroom Project</string>
+			<string>Hybrid Editor Project</string>
 			<key>UTTypeIcons</key>
 			<dict>
 				<key>UTTypeIconBadgeName</key>
 				<string>AppIcon</string>
 				<key>UTTypeIconText</key>
-				<string>ROOM</string>
+				<string>HYBRID</string>
 			</dict>
 			<key>UTTypeIdentifier</key>
 			<string>com.wonderassembly.editroom.project</string>

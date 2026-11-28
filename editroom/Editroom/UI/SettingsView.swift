@@ -6,7 +6,7 @@ struct SettingsView: View {
     @ObservedObject var model: EditorModel
 
     enum Tab: String, CaseIterable, Identifiable {
-        case general = "General", shortcuts = "Shortcuts", magic = "Magic"
+        case general = "General", shortcuts = "Shortcuts", magic = "AI & MCP"
         case skills = "Skills", plugins = "Plugins", explore = "Explore", integrations = "Integrations"
         case updates = "Updates"
         var id: Self { self }
@@ -14,7 +14,7 @@ struct SettingsView: View {
             switch self {
             case .general: "gearshape"
             case .shortcuts: "keyboard"
-            case .magic: "wand.and.sparkles"
+            case .magic: "sparkles"
             case .skills: "book.closed"
             case .plugins: "puzzlepiece.extension"
             case .explore: "safari"
@@ -22,8 +22,13 @@ struct SettingsView: View {
             case .updates: "arrow.down.circle"
             }
         }
-        /// The tab's name kept in UserDefaults.
-        var key: String { rawValue.lowercased() }
+        /// The tab's name kept in UserDefaults (`magic` stays stable for existing links/tests).
+        var key: String {
+            switch self {
+            case .magic: "magic"
+            default: rawValue.lowercased()
+            }
+        }
     }
 
     @AppStorage("settingsTab") private var tabKey = "shortcuts"
@@ -595,41 +600,28 @@ private struct KeyCap: View {
 
 // MARK: Magic
 
+/// AI & MCP connections, Antigravity 2.0 primary agent, and Quick Cut settings.
 private struct MagicSettings: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var server = MCPServer.shared
     @ObservedObject var connect = AgentConnect.shared
     @AppStorage("magicEnabled") private var magicEnabled = true
     @AppStorage("magicShowWork") private var showWork = true
+    @State private var mcpTestResult: (ok: Bool, text: String)?
+    @State private var testingMCP = false
 
-    /// Claude Code only when it's on this Mac.
+    /// Primary editing agents, with Antigravity 2.0 always featured first.
     private var apps: [AgentApp] {
-        [.claude, .chatgpt, .claudeCode, .antigravity].filter { $0 != .claudeCode || connect.states[$0] != .missing }
+        [.antigravity, .claude, .chatgpt, .claudeCode].filter { $0 != .claudeCode || connect.states[$0] != .missing }
     }
 
     var body: some View {
         ScrollView {
           VStack(alignment: .leading, spacing: 0) {
-            PageTitle("Magic")
+            PageTitle("AI & MCP")
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(text: "Magic")
-                    VStack(spacing: 0) {
-                        ToggleRow(title: "Enable Magic",
-                                  note: "Magic makes an edit for you: a quick cut on this Mac, or one Claude or ChatGPT works out from what you ask. Off hides the Magic button.",
-                                  isOn: $magicEnabled, boxed: false)
-                        Divider().overlay(Theme.stroke)
-                        ToggleRow(title: "Show Magic at work",
-                                  note: "Watch the cursors make the edit. Off, the edit appears at once, as one step you can undo.",
-                                  isOn: $showWork, boxed: false)
-                            .disabled(!magicEnabled)
-                            .opacity(magicEnabled ? 1 : 0.4)
-                    }
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(text: "AI apps")
+                    SectionLabel(text: "AI Assistants & Agents")
                     VStack(spacing: 0) {
                         ForEach(Array(apps.enumerated()), id: \.element) { i, app in
                             if i > 0 { Divider().overlay(Theme.stroke).padding(.leading, 58) }
@@ -637,19 +629,52 @@ private struct MagicSettings: View {
                         }
                     }
                     .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
-                    Text("Connected apps use your own Claude or ChatGPT plan; no API key needed. Disconnecting stops Editroom answering that app, for Magic and for edits you ask for in the app.")
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.stroke))
+                    Text("Antigravity 2.0 (`agy`) is Hybrid Editor's primary editing agent via local MCP. Disconnecting stops Hybrid Editor from answering that client.")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textFaint)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(text: "Editing from other apps")
-                    ToggleRow(title: "Let AI apps edit in Editroom",
-                              note: server.enabled
-                                ? "On: connected apps can edit here, with their own cursor, and every change can be undone. Only apps on this Mac can reach Editroom."
-                                : "Off: no app can reach Editroom, and Magic only makes quick cuts on this Mac.",
-                              isOn: $server.enabled)
+                    SectionLabel(text: "Local MCP Server (127.0.0.1)")
+                    VStack(spacing: 0) {
+                        ToggleRow(title: "Let AI apps edit in Hybrid Editor",
+                                  note: server.enabled
+                                    ? "On: connected agents live-attach on \(MCPServer.shared.localEndpoint ?? MCPServer.endpoint) and every turn maps to Undo (⌘Z)."
+                                    : "Off: external agents cannot connect; only local Quick Cuts on this Mac can run.",
+                                  isOn: $server.enabled, boxed: false)
+                        Divider().overlay(Theme.stroke)
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Endpoint Diagnostics").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
+                                Text(mcpTestResult?.text ?? (server.running ? "Listening at \(server.localEndpoint ?? MCPServer.endpoint)" : "MCP server stopped"))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(
+                                        mcpTestResult.map { $0.ok ? Color(hex: 0x39B54A) : Color(hex: 0xE5735C) }
+                                            ?? (server.running ? Theme.textDim : Color(hex: 0xE5A93B))
+                                    )
+                            }
+                            Spacer()
+                            if testingMCP {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                PillButton(title: "Test MCP", prominent: false) {
+                                    testingMCP = true
+                                    Task {
+                                        let res = await AgentConnect.testMCPEndpoint()
+                                        mcpTestResult = (res.ok, res.message)
+                                        testingMCP = false
+                                    }
+                                }
+                                .disabled(!server.enabled)
+                            }
+                        }
+                        .padding(14)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.stroke))
+
                     OwnAgentRow(enabled: server.enabled)
                     if let problem = server.problem, server.enabled {
                         Text(problem).font(.system(size: 11.5)).foregroundStyle(Color(hex: 0xE5735C))
@@ -670,13 +695,29 @@ private struct MagicSettings: View {
                         }
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionLabel(text: "Hybrid AI & Quick Cut")
+                    VStack(spacing: 0) {
+                        ToggleRow(title: "Enable Quick Cut (On-Device)",
+                                  note: "Quick Cut runs fast rule-based and Apple Intelligence edits directly on this Mac without an API key.",
+                                  isOn: $magicEnabled, boxed: false)
+                        Divider().overlay(Theme.stroke)
+                        ToggleRow(title: "Show AI cursor & live preview",
+                                  note: "Watch live edits animate onto the timeline. Off applies each turn cleanly in one step.",
+                                  isOn: $showWork, boxed: false)
+                            .disabled(!magicEnabled)
+                            .opacity(magicEnabled ? 1 : 0.4)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.stroke))
+                }
             }
           }
           .padding(.horizontal, 24)
           .padding(.vertical, 16)
         }
         .onAppear { connect.refresh() }
-        // Back from Claude or ChatGPT: see what changed.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             connect.refresh()
         }
@@ -691,11 +732,11 @@ private struct OwnAgentRow: View {
     private var prompt: String {
         let launcher = Bundle.main.executablePath ?? "/Applications/Editroom.app/Contents/MacOS/Editroom"
         return """
-        Connect to Editroom, the video editor on my Mac, and edit only through its MCP tools (never screenshots or clicks). \
-        Its MCP server runs as the command "\(launcher)" with the argument --mcp (stdio; it opens Editroom when needed), \
-        or at \(MCPServer.endpoint) (Streamable HTTP) while Editroom is open. Add it to your MCP settings as "editroom" \
+        Connect to Hybrid Editor, the video editor on my Mac, and edit only through its MCP tools (never screenshots or clicks). \
+        Its MCP server runs as the command "\(launcher)" with the argument --mcp (stdio; it opens Hybrid Editor when needed), \
+        or at \(MCPServer.endpoint) (Streamable HTTP) while Hybrid Editor is open. Add it to your MCP settings as "editroom" \
         (or use the entry if it's already there). Until its tools appear in a new session, call the address directly. \
-        Then call get_project and list_media, and follow the instructions Editroom sends when you connect.
+        Then call get_project and list_media, and follow the instructions Hybrid Editor sends when you connect.
         """
     }
 
@@ -764,48 +805,65 @@ private struct AppRow: View {
     let connect: AgentConnect
 
     private var icon: NSImage? {
-        let id: String? = switch app {
-        case .claude, .claudeCode: AgentConnect.claudeBundleID
-        case .chatgpt: AgentConnect.chatgptBundleIDs.first { AgentConnect.appURL($0) != nil }
-        case .antigravity: nil
+        switch app {
+        case .claude, .claudeCode:
+            guard let url = AgentConnect.appURL(AgentConnect.claudeBundleID) else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        case .chatgpt:
+            guard let url = AgentConnect.chatgptBundleIDs.lazy.compactMap(AgentConnect.appURL).first else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        case .antigravity:
+            guard let url = connect.antigravityAppURL else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
         }
-        guard let id, let url = AgentConnect.appURL(id) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     private var note: String {
         switch (app, state) {
-        case (_, .missing): "Not on this Mac."
+        case (_, .missing): "Not installed on this Mac."
         case (_, .working): "One moment…"
         case (_, .failed(let message)): message
         case (.claude, .ready):
             connect.claudeAppOff && connect.claudeExtensionInstalled
-                ? "Disconnected. To remove Editroom from Claude too, use Claude's Settings > Extensions."
-                : "Adds Editroom to the Claude app as an extension."
+                ? "Disconnected. To remove Hybrid Editor from Claude too, use Claude's Settings > Extensions."
+                : "Adds Hybrid Editor to the Claude app as an extension."
         case (.claude, .waiting): "Click Install in the Claude app to finish."
-        case (.claude, .connected): "Connected. Claude can edit here, and Magic can use it."
-        case (.chatgpt, .ready): "Adds Editroom to Codex in the ChatGPT app."
-        case (.chatgpt, .connected): "Connected. ChatGPT can edit here, and Magic can use it."
-        case (.claudeCode, .ready): "Adds Editroom to Claude Code for all your projects."
+        case (.claude, .connected): "Connected. Claude can live-edit via MCP."
+        case (.chatgpt, .ready): "Adds Hybrid Editor to Codex in the ChatGPT app."
+        case (.chatgpt, .connected): "Connected. ChatGPT Codex can live-edit via MCP."
+        case (.claudeCode, .ready): "Adds Hybrid Editor MCP to Claude Code."
         case (.claudeCode, .connected): "Connected. New Claude Code sessions can edit here."
-        case (.antigravity, .ready): "Adds Editroom HTTP MCP endpoint to Antigravity (~/.gemini/antigravity/mcp_config.json)."
-        case (.antigravity, .connected): "Connected. Antigravity agents can live-attach and edit here."
+        case (.antigravity, .ready):
+            connect.antigravityCLI != nil
+                ? "Primary agent (`agy` CLI found). Connect to register HTTP MCP in ~/.gemini/config & ~/.gemini/antigravity."
+                : "Adds Hybrid Editor HTTP MCP endpoint to Antigravity configs."
+        case (.antigravity, .connected):
+            connect.antigravityCLI != nil
+                ? "Connected · Primary agent (`agy` CLI ready). Live-attaches via local MCP."
+                : "Connected. Antigravity agents can live-attach and edit here."
         default: ""
         }
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            Group {
-                if let icon { Image(nsImage: icon).resizable() } else {
-                    RoundedRectangle(cornerRadius: 7).fill(Theme.raised)
-                }
-            }
-            .frame(width: 32, height: 32)
-            .opacity(state == .missing ? 0.5 : 1)
+            AppBadgeIcon(app: app, nativeIcon: icon)
+                .frame(width: 32, height: 32)
+                .opacity(state == .missing ? 0.55 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(app.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                HStack(spacing: 6) {
+                    Text(app.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                    if app == .antigravity {
+                        Text("PRIMARY")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .kerning(0.6)
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Theme.accent.opacity(0.15)))
+                    }
+                }
                 Text(note)
                     .font(.system(size: 11.5))
                     .foregroundStyle(isFailed ? Color(hex: 0xE5735C) : Theme.textDim)
@@ -837,12 +895,70 @@ private struct AppRow: View {
             PillButton(title: "Disconnect", prominent: false) { connect.disconnect(app) }
         case .ready:
             PillButton(title: "Connect", prominent: true) {
-                // Connecting an app means letting AI apps in.
                 if !MCPServer.shared.enabled { MCPServer.shared.enabled = true }
                 connect.connect(app)
             }
         case .failed:
             PillButton(title: "Try Again", prominent: true) { connect.connect(app) }
+        }
+    }
+}
+
+/// Crisp brand icon badge for AI apps (uses macOS app bundle icon when installed, or a styled SF Symbol squircle).
+private struct AppBadgeIcon: View {
+    let app: AgentApp
+    let nativeIcon: NSImage?
+
+    var body: some View {
+        if let nativeIcon {
+            Image(nsImage: nativeIcon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(backgroundStyle)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Theme.ink.opacity(0.12))
+                )
+                .overlay(
+                    Image(systemName: symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(foregroundColor)
+                )
+        }
+    }
+
+    private var backgroundStyle: AnyShapeStyle {
+        switch app {
+        case .antigravity:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(hex: 0x26294A), Color(hex: 0x161824)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+        case .claude, .claudeCode:
+            return AnyShapeStyle(Color(hex: 0xD97757))
+        case .chatgpt:
+            return AnyShapeStyle(Color(hex: 0x2B2D33))
+        }
+    }
+
+    private var symbol: String {
+        switch app {
+        case .antigravity: "sparkles"
+        case .claude: "asterisk"
+        case .claudeCode: "terminal"
+        case .chatgpt: "circle.dashed"
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch app {
+        case .antigravity: Theme.accent
+        case .claude, .claudeCode, .chatgpt: .white
         }
     }
 }
@@ -891,7 +1007,7 @@ private struct UpdateSettings: View {
                             .foregroundStyle(Theme.textDim)
                             .fixedSize(horizontal: false, vertical: true)
                         PillButton(title: "View GitHub Releases", prominent: false) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/robbietilton/Editroom/releases")!)
+                            NSWorkspace.shared.open(URL(string: "https://github.com/nguyenducvuongg/hybrid_editor/releases")!)
                         }
                     }
                 }

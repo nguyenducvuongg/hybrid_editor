@@ -532,11 +532,12 @@ enum ExtensionsTest {
                 return fail("E5", "persisted thread reload mismatch: count=\(reloaded.first?.messages.count ?? -1)")
             }
 
-            // Antigravity config merge preserves existing entries cleanly.
+            // Antigravity config merge preserves existing entries cleanly across v1 & v2 paths.
             let mockHome = outDir.appendingPathComponent("mock_home", isDirectory: true)
             let agyDir = mockHome.appendingPathComponent(".gemini/antigravity", isDirectory: true)
             try fm.createDirectory(at: agyDir, withIntermediateDirectories: true)
             let cfgURL = agyDir.appendingPathComponent("mcp_config.json")
+            let v2CfgURL = mockHome.appendingPathComponent(".gemini/config/mcp_config.json")
             try #"{"mcpServers":{"other_tool":{"url":"http://127.0.0.1:9999/mcp"}}}"#
                 .write(to: cfgURL, atomically: true, encoding: .utf8)
 
@@ -548,14 +549,24 @@ enum ExtensionsTest {
             let mergedData = try Data(contentsOf: cfgURL)
             let mergedObj = (try? JSONSerialization.jsonObject(with: mergedData) as? [String: Any]) ?? [:]
             let mergedServers = (mergedObj["mcpServers"] as? [String: Any]) ?? [:]
-            guard mergedServers["other_tool"] != nil, mergedServers["editroom"] != nil else {
+            let v2Data = try Data(contentsOf: v2CfgURL)
+            let v2Obj = (try? JSONSerialization.jsonObject(with: v2Data) as? [String: Any]) ?? [:]
+            let v2Servers = (v2Obj["mcpServers"] as? [String: Any]) ?? [:]
+            guard mergedServers["other_tool"] != nil,
+                  mergedServers["editroom"] != nil,
+                  v2Servers["editroom"] != nil else {
                 return fail("E5", "connectAntigravity failed non-destructive merge")
             }
             try AgentConnect.shared.disconnectAntigravity()
             let afterDisData = try Data(contentsOf: cfgURL)
             let afterDisObj = (try? JSONSerialization.jsonObject(with: afterDisData) as? [String: Any]) ?? [:]
             let afterServers = (afterDisObj["mcpServers"] as? [String: Any]) ?? [:]
-            guard afterServers["other_tool"] != nil, afterServers["editroom"] == nil else {
+            let afterV2Data = try Data(contentsOf: v2CfgURL)
+            let afterV2Obj = (try? JSONSerialization.jsonObject(with: afterV2Data) as? [String: Any]) ?? [:]
+            let afterV2Servers = (afterV2Obj["mcpServers"] as? [String: Any]) ?? [:]
+            guard afterServers["other_tool"] != nil,
+                  afterServers["editroom"] == nil,
+                  afterV2Servers["editroom"] == nil else {
                 return fail("E5", "disconnectAntigravity damaged existing server entry")
             }
         } catch {
@@ -621,6 +632,9 @@ enum ExtensionsTest {
         }
 
         var chatPrefs = ChatProviderPrefs()
+        guard chatPrefs.selectedProvider == .antigravity else {
+            return fail("E7", "Default ChatProviderPrefs provider should be .antigravity")
+        }
         chatPrefs.selectedProvider = .ollama
         chatPrefs.ollamaModel = "qwen2.5:14b"
         chatPrefs.save(defaults: testDefaults)
@@ -637,7 +651,8 @@ enum ExtensionsTest {
         PanelLayout.shared.showAgentChat = prevShowChat
 
         let hosts: [(String, NSView, CGSize)] = [
-            ("AgentChatPanel", NSHostingView(rootView: AgentChatPanel(model: model)), CGSize(width: 340, height: 560)),
+            ("AgentChatPanel", NSHostingView(rootView: AgentChatPanel(model: model)), CGSize(width: 360, height: 580)),
+            ("SettingsView", NSHostingView(rootView: SettingsView(model: model)), CGSize(width: 760, height: 660)),
             ("SkillsSettingsView", NSHostingView(rootView: SkillsSettingsView()), CGSize(width: 680, height: 560)),
             ("PluginsSettingsView", NSHostingView(rootView: PluginsSettingsView()), CGSize(width: 680, height: 560)),
             ("IntegrationsSettingsView", NSHostingView(rootView: IntegrationsSettingsView()), CGSize(width: 680, height: 560)),

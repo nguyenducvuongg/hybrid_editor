@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Hybrid Editor (Editroom)</title>
+    <title>Hybrid Editor</title>
     <item>
       <title>Version 2.0.0</title>
       <pubDate>Sat, 28 Nov 2026 15:00:00 +0000</pubDate>
@@ -13,7 +13,7 @@
 - Vietnamese Creator Suite: Word-level Karaoke/CapCut captions, BGM auto-ducking, beat-sync cuts, visual B-Roll FTS5 browser.
 - Studio Engine: Apple Vision face-tracking Auto-Reframe (16:9 to 9:16/1:1/4:5), ComfyUI Workflow Gallery + live WebSocket progress.
 - Ecosystem: Settings > Explore community Skills & Plugins catalog and GitHub Actions macOS CI/CD + DMG packaging.]]></changes>
-      <enclosure url="https://github.com/nguyenducvuongg/hybrid_editor/releases/download/v2.0.0/Editroom-2.0.0.dmg" length="0" type="application/octet-stream"/>
+      <enclosure url="https://github.com/nguyenducvuongg/hybrid_editor/releases/download/v2.0.0/Hybrid-Editor-2.0.0.dmg" length="0" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>

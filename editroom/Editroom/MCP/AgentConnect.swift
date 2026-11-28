@@ -64,14 +64,39 @@ final class AgentConnect: ObservableObject {
 
     static let claudeBundleID = "com.anthropic.claudefordesktop"
     static let chatgptBundleIDs = ["com.openai.codex", "com.openai.chat"]
+    static let antigravityBundleIDs = ["com.google.antigravity", "com.google.antigravity-ide"]
     static let editroomBundleID = Bundle.main.bundleIdentifier ?? "com.wonderassembly.Editroom"
 
     private var watch: Timer?
+
+    var antigravityAppURL: URL? {
+        Self.antigravityBundleIDs.lazy.compactMap(Self.appURL).first
+    }
+
+    /// Resolves the Antigravity 2.0 CLI (`agy`).
+    var antigravityCLI: URL? {
+        let fm = FileManager.default
+        let h = home.path
+        var candidates = [
+            "/opt/homebrew/bin/agy",
+            "/usr/local/bin/agy",
+            "\(h)/.local/bin/agy",
+        ]
+        if let envPath = ProcessInfo.processInfo.environment["PATH"] {
+            for dir in envPath.split(separator: ":") {
+                candidates.append("\(dir)/agy")
+            }
+        }
+        return candidates.first(where: { fm.isExecutableFile(atPath: $0) }).map { URL(fileURLWithPath: $0) }
+    }
 
     // MARK: Status
 
     func refresh() {
         followMove()
+        if antigravityConnected {
+            try? syncAntigravityIfConnected()
+        }
         for app in AgentApp.allCases {
             if case .working = states[app] { continue }
             states[app] = status(of: app)
@@ -93,7 +118,8 @@ final class AgentConnect: ObservableObject {
             if claudeCodeConnected { return .connected }
             return claudeCLI == nil ? .missing : .ready
         case .antigravity:
-            return antigravityConnected ? .connected : .ready
+            if antigravityConnected { return .connected }
+            return (antigravityAppURL != nil || antigravityCLI != nil || FileManager.default.fileExists(atPath: home.appendingPathComponent(".gemini").path)) ? .ready : .missing
         }
     }
 
@@ -419,36 +445,92 @@ final class AgentConnect: ObservableObject {
         home.appendingPathComponent(".gemini/antigravity/mcp_config.json")
     }
 
+    var antigravityV2ConfigURL: URL {
+        home.appendingPathComponent(".gemini/config/mcp_config.json")
+    }
+
+    private var antigravityConfigURLs: [URL] {
+        [antigravityConfigURL, antigravityV2ConfigURL]
+    }
+
     var antigravityConnected: Bool {
-        guard let data = try? Data(contentsOf: antigravityConfigURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-        return (json["mcpServers"] as? [String: Any])?["editroom"] != nil
+        antigravityConfigURLs.contains { url in
+            guard let data = try? Data(contentsOf: url),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+            return (json["mcpServers"] as? [String: Any])?["editroom"] != nil
+        }
     }
 
     func connectAntigravity() throws {
-        var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: antigravityConfigURL),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            root = parsed
-        }
-        var servers = (root["mcpServers"] as? [String: Any]) ?? [:]
-        servers["editroom"] = [
-            "url": MCPServer.endpoint,
-            "serverUrl": MCPServer.endpoint,
+        let liveEndpoint = MCPServer.shared.localEndpoint ?? MCPServer.endpoint
+        let entry: [String: Any] = [
+            "type": "http",
+            "url": liveEndpoint,
+            "serverUrl": liveEndpoint,
         ]
-        root["mcpServers"] = servers
-        let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL, posixPermissions: 0o600)
+        for url in antigravityConfigURLs {
+            var root: [String: Any] = [:]
+            if let data = try? Data(contentsOf: url),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                root = parsed
+            }
+            var servers = (root["mcpServers"] as? [String: Any]) ?? [:]
+            servers["editroom"] = entry
+            root["mcpServers"] = servers
+            let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try HybridStorage.writeAtomicVerified(encoded, to: url, posixPermissions: 0o600)
+        }
     }
 
     func disconnectAntigravity() throws {
-        guard let data = try? Data(contentsOf: antigravityConfigURL),
-              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var servers = root["mcpServers"] as? [String: Any] else { return }
-        servers.removeValue(forKey: "editroom")
-        root["mcpServers"] = servers
-        let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL, posixPermissions: 0o600)
+        for url in antigravityConfigURLs {
+            guard let data = try? Data(contentsOf: url),
+                  var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  var servers = root["mcpServers"] as? [String: Any] else { continue }
+            servers.removeValue(forKey: "editroom")
+            root["mcpServers"] = servers
+            let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try HybridStorage.writeAtomicVerified(encoded, to: url, posixPermissions: 0o600)
+        }
+    }
+
+    func syncAntigravityIfConnected() throws {
+        guard antigravityConnected else { return }
+        let liveEndpoint = MCPServer.shared.localEndpoint ?? MCPServer.endpoint
+        let needsUpdate = antigravityConfigURLs.contains { url in
+            guard let data = try? Data(contentsOf: url),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let servers = root["mcpServers"] as? [String: Any],
+                  let entry = servers["editroom"] as? [String: Any] else { return true }
+            return (entry["url"] as? String) != liveEndpoint || (entry["serverUrl"] as? String) != liveEndpoint
+        }
+        if needsUpdate {
+            try connectAntigravity()
+        }
+    }
+
+    static func testMCPEndpoint(endpoint: String? = nil) async -> (ok: Bool, message: String) {
+        let target = await MainActor.run { endpoint ?? MCPServer.shared.localEndpoint ?? MCPServer.endpoint }
+        guard let url = URL(string: target) else {
+            return (false, "Invalid MCP endpoint URL")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 3.0
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.data(using: .utf8)
+        let started = Date()
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let ms = Int((Date().timeIntervalSince(started) * 1000.0).rounded())
+            if (200..<300).contains(code) {
+                return (true, "MCP live · HTTP \(code) · \(ms)ms")
+            }
+            return (false, "HTTP \(code) from \(target)")
+        } catch {
+            return (false, SecretRedactor.redact(error.localizedDescription))
+        }
     }
 
     // MARK: Claude Code

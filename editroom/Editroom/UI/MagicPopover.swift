@@ -155,6 +155,7 @@ struct MagicPopover: View {
 
     private func app(for kind: MagicAgent.Kind) -> AgentApp {
         switch kind {
+        case .antigravity: .antigravity
         case .chatgpt: .chatgpt
         // The Claude app's extension; Claude Code when there's no Claude app.
         case .claude: AgentConnect.appURL(AgentConnect.claudeBundleID) != nil ? .claude : .claudeCode
@@ -185,7 +186,12 @@ struct MagicPopover: View {
 
     private func go(_ kind: MagicAgent.Kind) {
         close()
-        model.addMagicPrompt(request, tab: kind == .claude ? .claude : .chatgpt)
+        let tab: MagicAgent.Tab = switch kind {
+        case .antigravity: .antigravity
+        case .claude: .claude
+        case .chatgpt: .chatgpt
+        }
+        model.addMagicPrompt(request, tab: tab)
         ai.start(request: request, with: kind, model: model)
         request = ""
     }
@@ -246,21 +252,40 @@ struct AppLogo: View {
     let size: CGFloat
 
     private var icon: NSImage? {
-        let ids = kind == .claude ? [AgentConnect.claudeBundleID] : AgentConnect.chatgptBundleIDs
-        guard let url = ids.lazy.compactMap(AgentConnect.appURL).first else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        switch kind {
+        case .antigravity:
+            guard let url = AgentConnect.shared.antigravityAppURL else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        case .claude:
+            guard let url = AgentConnect.appURL(AgentConnect.claudeBundleID) else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        case .chatgpt:
+            guard let url = AgentConnect.chatgptBundleIDs.lazy.compactMap(AgentConnect.appURL).first else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
     }
 
     var body: some View {
         if let icon {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
+            let fill: Color = switch kind {
+            case .antigravity: Color(hex: 0x1E2235)
+            case .claude: Color(hex: 0xD97757)
+            case .chatgpt: Color(hex: 0xF2F2F0)
+            }
+            let symbol: String = switch kind {
+            case .antigravity: "sparkles"
+            case .claude: "asterisk"
+            case .chatgpt: "circle.dashed"
+            }
+            let fg: Color = kind == .chatgpt ? .black : .white
             RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .fill(kind == .claude ? Color(hex: 0xD97757) : Color(hex: 0xF2F2F0))
+                .fill(fill)
                 .frame(width: size, height: size)
-                .overlay(Image(systemName: kind == .claude ? "asterisk" : "circle.dashed")
+                .overlay(Image(systemName: symbol)
                     .font(.system(size: size * 0.5, weight: .bold))
-                    .foregroundStyle(kind == .claude ? .white : .black))
+                    .foregroundStyle(fg))
         }
     }
 }

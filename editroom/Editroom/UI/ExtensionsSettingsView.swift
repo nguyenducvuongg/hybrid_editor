@@ -393,6 +393,12 @@ struct IntegrationsSettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     SettingsSection("AI Chat Providers") {
                         VStack(spacing: 0) {
+                            SettingsRow("Antigravity 2.0 Model", detail: "Primary agent (`agy` CLI). Leave blank for auto.") {
+                                TextField("Auto (default)", text: $chatPrefs.antigravityModel)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 240)
+                            }
+                            Divider().overlay(Theme.stroke)
                             SettingsRow("Gemini API Key", detail: "Stored in Keychain") {
                                 SecureField("AIza…", text: $geminiKey)
                                     .textFieldStyle(.roundedBorder)

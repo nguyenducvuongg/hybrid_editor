@@ -40,7 +40,7 @@ struct ContentView: View {
                         .background(MagicAnchor(key: "inspector"))
                     if layout.showAgentChat {
                         Splitter(vertical: true) { x in
-                            layout.agentChatWidth = min(520, max(280, frame.maxX - x))
+                            layout.agentChatWidth = min(540, max(320, frame.maxX - x))
                         }
                         AgentChatPanel(model: model)
                             .frame(width: layout.agentChatWidth)
@@ -103,7 +103,6 @@ struct ContentView: View {
 struct WindowRoot: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject private var themes = ThemeStore.shared
-    @AppStorage("magicEnabled") private var magicEnabled = true
     @State private var width: CGFloat = 1480
 
     var body: some View {
@@ -121,11 +120,7 @@ struct WindowRoot: View {
                         TabStrip(workspace: workspace)
                             .padding(.trailing, 14)
                         ExportProgressPill(queue: model.exports)
-                        if magicEnabled {
-                            MagicButton(model: model)
-                                .padding(.trailing, 8)
-                        }
-                        ChatSidebarToggle()
+                        AIAssistantToolbarButton(model: model)
                             .padding(.trailing, 8)
                         PillButton(title: "Export", prominent: true) { model.showExport = true }
                             .help("Export (\(ShortcutStore.shared.combos(.export).first?.display ?? "⌘E"))")
@@ -138,29 +133,101 @@ struct WindowRoot: View {
     }
 }
 
-private struct ChatSidebarToggle: View {
+private struct AIAssistantToolbarButton: View {
+    @ObservedObject var model: EditorModel
     @ObservedObject private var layout = PanelLayout.shared
+    @ObservedObject private var chatStore = ChatSessionStore.shared
+    @ObservedObject private var state = MagicState.shared
+    @ObservedObject private var ai = MagicAgent.shared
+    @ObservedObject private var connections = AgentConnect.shared
+    @ObservedObject private var server = MCPServer.shared
     @State private var hovering = false
 
-    var body: some View {
-        Button {
-            layout.showAgentChat.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Chat")
-                    .font(.system(size: 11.5, weight: .medium))
+    private var working: Bool {
+        chatStore.isRunning || ai.running || state.busy || state.stage != nil
+    }
+
+    private var liveActivityText: String? {
+        if chatStore.isRunning { return chatStore.liveStatus ?? "Antigravity editing…" }
+        if ai.running {
+            if let stage = state.stage {
+                if stage != "Editing", let doing = state.activity { return doing.prefix(1).uppercased() + doing.dropFirst() }
+                return stage
             }
-            .foregroundStyle(layout.showAgentChat ? Theme.text : Theme.textDim)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(Capsule().fill(Theme.ink.opacity(layout.showAgentChat ? 0.16 : hovering ? 0.12 : 0.08)))
-            .overlay(Capsule().strokeBorder(layout.showAgentChat ? Theme.accent.opacity(0.6) : Theme.ink.opacity(0.05)))
+            return ai.status
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("Toggle Agent Chat sidebar (⌘L)")
+        return state.status ?? state.stage
+    }
+
+    private var antigravityReady: Bool {
+        server.running && connections.antigravityConnected
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let status = liveActivityText, !status.isEmpty {
+                Text(status.count > 36 ? String(status.prefix(35)) + "…" : status)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .transition(.opacity)
+            }
+
+            Button {
+                if working && hovering {
+                    if chatStore.isRunning { chatStore.cancelActiveTurn() }
+                    MagicShow.stopAll()
+                } else {
+                    layout.showAgentChat.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if working {
+                        if hovering {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        } else {
+                            ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                        }
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(layout.showAgentChat ? Theme.accent : Theme.text)
+                    }
+                    Text(working && hovering ? "Stop" : "Hybrid AI")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    if !working {
+                        Circle()
+                            .fill(antigravityReady ? Color(hex: 0x39B54A) : Color(hex: 0xE5A93B))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .padding(.horizontal, 11)
+                .frame(height: 26)
+                .fixedSize()
+                .background(Capsule().fill(Theme.ink.opacity(layout.showAgentChat ? 0.16 : hovering ? 0.12 : 0.08)))
+                .overlay(Capsule().strokeBorder(layout.showAgentChat ? Theme.accent.opacity(0.6) : Theme.ink.opacity(0.06)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .background(MagicAnchor(key: "magicButton"))
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .onAppear { connections.refresh() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                connections.refresh()
+            }
+            .help(working ? "Hover to stop active AI task, or click to toggle Hybrid AI (⌘L)"
+                  : "Hybrid AI & Antigravity 2.0 Studio (⌘L)")
+            .popover(item: $ai.note, arrowEdge: .bottom) { note in
+                MagicNoteView(note: note, model: model) { ai.note = nil }
+                    .presentationBackground(Theme.panel)
+            }
+        }
+        .fixedSize()
     }
 }
 

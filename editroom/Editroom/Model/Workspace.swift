@@ -173,5 +173,5 @@ final class PanelLayout: ObservableObject {
     @Published var showAgentChat: Bool = UserDefaults.standard.bool(forKey: "showAgentChat") {
         didSet { UserDefaults.standard.set(showAgentChat, forKey: "showAgentChat") }
     }
-    @Published var agentChatWidth: CGFloat = 340
+    @Published var agentChatWidth: CGFloat = 360
 }

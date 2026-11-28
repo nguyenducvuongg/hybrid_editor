@@ -68,7 +68,7 @@ final class ChatSessionStore: ObservableObject {
 
     @discardableResult
     func createThread(for projectKey: String, title: String = "New Chat",
-                      providerId: String = "gemini", modelId: String = "gemini-2.5-flash") -> ChatThread {
+                      providerId: String = AgentProviderKind.antigravity.rawValue, modelId: String = "") -> ChatThread {
         if threads.isEmpty || threads.first?.projectKey != projectKey {
             _ = loadThreads(for: projectKey)
         }
@@ -129,110 +129,177 @@ final class ChatSessionStore: ObservableObject {
         }
 
         let skillPrompt = skillRegistry.composePromptSection(explicitSlugs: allSlugs)
-        let baseSystem = """
-        You are Editroom's editing assistant working inside a live project timeline.
-        An AgentTurn is already open for this message; edit directly and always inspect with get_project / list_media before mutating. Keep explanations concise.
-        """
+        let baseSystem: String
+        if provider.usesExternalMCP {
+            baseSystem = """
+            You are Hybrid Editor's editing assistant working inside a live project timeline.
+            Edit the open Hybrid Editor timeline via its `editroom` MCP tools (`get_project`, `list_media`, etc.). \
+            Never touch source code files on disk. Keep explanations concise.
+            """
+        } else {
+            baseSystem = """
+            You are Hybrid Editor's editing assistant working inside a live project timeline.
+            An AgentTurn is already open for this message; edit directly and always inspect with get_project / list_media before mutating. Keep explanations concise.
+            """
+        }
         let fullSystemPrompt = skillPrompt.isEmpty ? baseSystem : "\(baseSystem)\n\n\(skillPrompt)"
 
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let (_, recovered) = try model.leaseManager.acquire(sessionId: sessionId, clientPid: pid, role: .liveAgent)
-        if let rec = recovered, rec.uncommittedTurnId != nil {
-            _ = model.rollbackAnyActiveAgentTurn()
-        }
-
-        let turnId = "chat-\(UUID().uuidString.prefix(12))"
         let turnSummary = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
-        try model.beginAgentTurn(turnId: turnId, summary: turnSummary.isEmpty ? "Chat edit" : turnSummary, sessionId: sessionId)
-        try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: turnId)
-
-        var turnCommitted = false
-        defer {
-            if !turnCommitted {
-                _ = try? model.rollbackAgentTurn(turnId: turnId)
-                try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: nil)
-            }
-            try? model.leaseManager.release(sessionId: sessionId)
-        }
-
-        // Gather standard editing MCP tools + enabled & trusted Tier A plugin tools.
-        var pluginTools: [[String: Any]] = []
-        for plugin in pluginHost.plugins where plugin.enabled && plugin.trustedForExecution && plugin.manifest.mcp != nil {
-            if let pTools = try? await pluginHost.listPluginTools(id: plugin.id) {
-                pluginTools.append(contentsOf: pTools)
-            }
-        }
-        let tools = Self.inAppTools(pluginTools: pluginTools)
-
+        let replyText: String
         var recordedEvents: [ChatToolEvent] = []
-        let requestSnapshot = AgentRequest(
-            thread: currentThread,
-            userPrompt: prompt,
-            systemPrompt: fullSystemPrompt,
-            tools: tools,
-            modelId: modelId.isEmpty ? currentThread.modelId : modelId
-        )
+        var turnLink: ChatTurnLink?
 
-        let turnTask = Task {
-            try await provider.runTurn(
-                requestSnapshot,
-                toolExecutor: { [weak self, weak model] toolName, args in
-                    guard let self, let model else {
-                        throw MCPToolError("Editor session is no longer active.")
-                    }
-                    if toolName.hasPrefix("plugin.") {
-                        let res = try await self.pluginHost.callNamespacedTool(toolName, arguments: args)
-                        recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "plugin", succeeded: true))
-                        return res
-                    }
-                    do {
-                        let out = try await MCPTools.call(
-                            toolName,
-                            args,
-                            model: model,
-                            client: nil,
-                            draft: model.activeAgentTurn?.draft,
-                            sessionId: sessionId,
-                            isExternal: true
-                        )
-                        recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "ok", succeeded: true))
-                        return out
-                    } catch {
-                        recordedEvents.append(ChatToolEvent(
-                            toolName: toolName,
-                            summary: SecretRedactor.redact(error.localizedDescription),
-                            succeeded: false
-                        ))
-                        throw error
-                    }
-                },
-                onEvent: { [weak self] ev in
-                    Task { @MainActor in
-                        switch ev {
-                        case .status(let msg): self?.liveStatus = msg
-                        case .toolStarted(let name): self?.liveStatus = "Running \(name)…"
-                        case .toolFinished(let name, let ok): self?.liveStatus = ok ? "Done \(name)" : "Failed \(name)"
-                        case .textDelta(let delta): self?.streamingText += delta
-                        }
-                        onEvent?(ev)
-                    }
-                }
+        if provider.usesExternalMCP {
+            if !MCPServer.shared.running {
+                if !MCPServer.shared.enabled { MCPServer.shared.enabled = true }
+                MCPServer.shared.start()
+            }
+            if provider.kind == .antigravity {
+                try? AgentConnect.shared.connectAntigravity()
+            }
+
+            let revBefore = model.revision
+            let clipsBefore = Set(model.project.clips.map(\.id))
+            let requestSnapshot = AgentRequest(
+                thread: currentThread,
+                userPrompt: prompt,
+                systemPrompt: fullSystemPrompt,
+                tools: [],
+                modelId: modelId.isEmpty ? currentThread.modelId : modelId
             )
+            let turnTask = Task {
+                try await provider.runTurn(
+                    requestSnapshot,
+                    toolExecutor: { _, _ in
+                        throw MCPToolError("External CLI providers call Hybrid Editor MCP tools directly.")
+                    },
+                    onEvent: { [weak self] ev in
+                        Task { @MainActor in
+                            switch ev {
+                            case .status(let msg): self?.liveStatus = msg
+                            case .toolStarted(let name): self?.liveStatus = "Running \(name)…"
+                            case .toolFinished(let name, let ok): self?.liveStatus = ok ? "Done \(name)" : "Failed \(name)"
+                            case .textDelta(let delta): self?.streamingText += delta
+                            }
+                            onEvent?(ev)
+                        }
+                    }
+                )
+            }
+            activeTurnTask = turnTask
+            replyText = try await turnTask.value
+
+            if model.revision > revBefore {
+                let clipsAfter = Set(model.project.clips.map(\.id))
+                let changedIds = Array(clipsBefore.symmetricDifference(clipsAfter))
+                if let top = model.topUndoTurn {
+                    turnLink = ChatTurnLink(
+                        turnId: top.turnId,
+                        summary: turnSummary.isEmpty ? top.summary : turnSummary,
+                        revisionAfterCommit: model.revision,
+                        affectedClipIds: top.affectedClipIds.isEmpty ? changedIds : top.affectedClipIds,
+                        reverted: false
+                    )
+                }
+            }
+        } else {
+            let pid = ProcessInfo.processInfo.processIdentifier
+            let (_, recovered) = try model.leaseManager.acquire(sessionId: sessionId, clientPid: pid, role: .liveAgent)
+            if let rec = recovered, rec.uncommittedTurnId != nil {
+                _ = model.rollbackAnyActiveAgentTurn()
+            }
+
+            let turnId = "chat-\(UUID().uuidString.prefix(12))"
+            try model.beginAgentTurn(turnId: turnId, summary: turnSummary.isEmpty ? "Chat edit" : turnSummary, sessionId: sessionId)
+            try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: turnId)
+
+            var turnCommitted = false
+            defer {
+                if !turnCommitted {
+                    _ = try? model.rollbackAgentTurn(turnId: turnId)
+                    try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: nil)
+                }
+                try? model.leaseManager.release(sessionId: sessionId)
+            }
+
+            // Gather standard editing MCP tools + enabled & trusted Tier A plugin tools.
+            var pluginTools: [[String: Any]] = []
+            for plugin in pluginHost.plugins where plugin.enabled && plugin.trustedForExecution && plugin.manifest.mcp != nil {
+                if let pTools = try? await pluginHost.listPluginTools(id: plugin.id) {
+                    pluginTools.append(contentsOf: pTools)
+                }
+            }
+            let tools = Self.inAppTools(pluginTools: pluginTools)
+
+            let requestSnapshot = AgentRequest(
+                thread: currentThread,
+                userPrompt: prompt,
+                systemPrompt: fullSystemPrompt,
+                tools: tools,
+                modelId: modelId.isEmpty ? currentThread.modelId : modelId
+            )
+
+            let turnTask = Task {
+                try await provider.runTurn(
+                    requestSnapshot,
+                    toolExecutor: { [weak self, weak model] toolName, args in
+                        guard let self, let model else {
+                            throw MCPToolError("Editor session is no longer active.")
+                        }
+                        if toolName.hasPrefix("plugin.") {
+                            let res = try await self.pluginHost.callNamespacedTool(toolName, arguments: args)
+                            recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "plugin", succeeded: true))
+                            return res
+                        }
+                        do {
+                            let out = try await MCPTools.call(
+                                toolName,
+                                args,
+                                model: model,
+                                client: nil,
+                                draft: model.activeAgentTurn?.draft,
+                                sessionId: sessionId,
+                                isExternal: true
+                            )
+                            recordedEvents.append(ChatToolEvent(toolName: toolName, summary: "ok", succeeded: true))
+                            return out
+                        } catch {
+                            recordedEvents.append(ChatToolEvent(
+                                toolName: toolName,
+                                summary: SecretRedactor.redact(error.localizedDescription),
+                                succeeded: false
+                            ))
+                            throw error
+                        }
+                    },
+                    onEvent: { [weak self] ev in
+                        Task { @MainActor in
+                            switch ev {
+                            case .status(let msg): self?.liveStatus = msg
+                            case .toolStarted(let name): self?.liveStatus = "Running \(name)…"
+                            case .toolFinished(let name, let ok): self?.liveStatus = ok ? "Done \(name)" : "Failed \(name)"
+                            case .textDelta(let delta): self?.streamingText += delta
+                            }
+                            onEvent?(ev)
+                        }
+                    }
+                )
+            }
+            activeTurnTask = turnTask
+            replyText = try await turnTask.value
+
+            let commit = try model.commitAgentTurn(turnId: turnId)
+            turnCommitted = true
+            try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: nil)
+
+            turnLink = commit.pushedUndoStep ? ChatTurnLink(
+                turnId: commit.turnId,
+                summary: commit.summary,
+                revisionAfterCommit: commit.revision,
+                affectedClipIds: commit.affectedClipIds,
+                reverted: false
+            ) : nil
         }
-        activeTurnTask = turnTask
-        let replyText = try await turnTask.value
-
-        let commit = try model.commitAgentTurn(turnId: turnId)
-        turnCommitted = true
-        try? model.leaseManager.setActiveTurn(sessionId: sessionId, turnId: nil)
-
-        let turnLink: ChatTurnLink? = commit.pushedUndoStep ? ChatTurnLink(
-            turnId: commit.turnId,
-            summary: commit.summary,
-            revisionAfterCommit: commit.revision,
-            affectedClipIds: commit.affectedClipIds,
-            reverted: false
-        ) : nil
 
         let userMsg = ChatMessage(role: .user, text: prompt, skillSlugs: allSlugs)
         let assistantMsg = ChatMessage(

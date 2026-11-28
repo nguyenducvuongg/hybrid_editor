@@ -80,12 +80,30 @@ struct ComfyConnectionPrefs: Codable, Equatable, Sendable {
 
 /// Non-secret AI Chat provider defaults (`UserDefaults`).
 struct ChatProviderPrefs: Codable, Equatable, Sendable {
-    var selectedProvider: AgentProviderKind = .geminiAPI
+    var selectedProvider: AgentProviderKind = .antigravity
+    var antigravityModel: String = ""
     var geminiModel: String = "gemini-2.5-flash"
     var openAIModel: String = "gpt-4o"
     var ollamaModel: String = "qwen2.5:14b"
     var openAIBaseURL: String = "https://api.openai.com/v1"
     var ollamaBaseURL: String = "http://127.0.0.1:11434/v1"
+
+    private enum CodingKeys: String, CodingKey {
+        case selectedProvider, antigravityModel, geminiModel, openAIModel, ollamaModel, openAIBaseURL, ollamaBaseURL
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        selectedProvider = try c.decodeIfPresent(AgentProviderKind.self, forKey: .selectedProvider) ?? .antigravity
+        antigravityModel = try c.decodeIfPresent(String.self, forKey: .antigravityModel) ?? ""
+        geminiModel = try c.decodeIfPresent(String.self, forKey: .geminiModel) ?? "gemini-2.5-flash"
+        openAIModel = try c.decodeIfPresent(String.self, forKey: .openAIModel) ?? "gpt-4o"
+        ollamaModel = try c.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "qwen2.5:14b"
+        openAIBaseURL = try c.decodeIfPresent(String.self, forKey: .openAIBaseURL) ?? "https://api.openai.com/v1"
+        ollamaBaseURL = try c.decodeIfPresent(String.self, forKey: .ollamaBaseURL) ?? "http://127.0.0.1:11434/v1"
+    }
 
     private static let defaultsKey = "chatProviderPrefs"
 
@@ -105,6 +123,7 @@ struct ChatProviderPrefs: Codable, Equatable, Sendable {
 
     func activeModelId() -> String {
         switch selectedProvider {
+        case .antigravity: antigravityModel
         case .geminiAPI: geminiModel
         case .openAICompatible: openAIModel
         case .ollama: ollamaModel

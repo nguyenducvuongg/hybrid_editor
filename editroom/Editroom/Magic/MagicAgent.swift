@@ -10,16 +10,29 @@ final class MagicAgent: ObservableObject {
     static let shared = MagicAgent()
 
     enum Kind: String, CaseIterable, Identifiable {
-        case claude, chatgpt
+        case antigravity, claude, chatgpt
         var id: String { rawValue }
-        var name: String { self == .claude ? "Claude" : "ChatGPT" }
+        var name: String {
+            switch self {
+            case .antigravity: "Antigravity"
+            case .claude: "Claude"
+            case .chatgpt: "ChatGPT"
+            }
+        }
     }
 
     /// The Magic popover's tabs: an AI, or the built-in cut on this Mac.
     enum Tab: String, CaseIterable, Identifiable {
-        case claude, chatgpt, local
+        case antigravity, claude, chatgpt, local
         var id: String { rawValue }
-        var kind: Kind? { self == .claude ? .claude : self == .chatgpt ? .chatgpt : nil }
+        var kind: Kind? {
+            switch self {
+            case .antigravity: .antigravity
+            case .claude: .claude
+            case .chatgpt: .chatgpt
+            case .local: nil
+            }
+        }
         var name: String { kind?.name ?? "Local" }
     }
 
@@ -47,7 +60,7 @@ final class MagicAgent: ObservableObject {
     /// The popover's tab, remembered.
     /// The prompt being typed in the Magic box, kept while it's closed and cleared when it's sent.
     @Published var prompt = ""
-    @Published var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "magicTab") ?? "") ?? .claude {
+    @Published var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "magicTab") ?? "") ?? .antigravity {
         didSet { UserDefaults.standard.set(tab.rawValue, forKey: "magicTab") }
     }
     /// The model and effort of the run in progress, for its note.
@@ -76,19 +89,25 @@ final class MagicAgent: ObservableObject {
         let c = AgentConnect.shared
         guard MCPServer.shared.enabled else { return false }
         switch kind {
+        case .antigravity: return c.states[.antigravity] == .connected
         case .claude: return c.states[.claude] == .connected || c.states[.claudeCode] == .connected
         case .chatgpt: return c.states[.chatgpt] == .connected
         }
     }
 
-    /// The program Magic runs is on this Mac: Claude Code, or the Codex that comes with ChatGPT.
+    /// The program Magic runs is on this Mac: Antigravity (`agy`), Claude Code, or Codex.
     func runnable(_ kind: Kind) -> Bool {
-        kind == .claude ? AgentConnect.shared.claudeCLI != nil : AgentConnect.shared.codexCLI != nil
+        switch kind {
+        case .antigravity: AgentConnect.shared.antigravityCLI != nil
+        case .claude: AgentConnect.shared.claudeCLI != nil
+        case .chatgpt: AgentConnect.shared.codexCLI != nil
+        }
     }
 
     /// The app (or its program) is on this Mac at all.
     func installed(_ kind: Kind) -> Bool {
         switch kind {
+        case .antigravity: return AgentConnect.shared.antigravityAppURL != nil || AgentConnect.shared.antigravityCLI != nil
         case .claude: return AgentConnect.appURL(AgentConnect.claudeBundleID) != nil || AgentConnect.shared.claudeCLI != nil
         case .chatgpt: return AgentConnect.chatgptBundleIDs.contains { AgentConnect.appURL($0) != nil } || AgentConnect.shared.codexCLI != nil
         }
@@ -123,6 +142,8 @@ final class MagicAgent: ObservableObject {
     /// The models each AI offers. ChatGPT's come from Codex's own list on this Mac.
     func models(for kind: Kind) -> [ModelOption] {
         switch kind {
+        case .antigravity:
+            return [ModelOption(id: "", name: "Auto (Antigravity)", blurb: "Primary", efforts: ["medium"], defaultEffort: "medium")]
         case .claude:
             let efforts = ["low", "medium", "high", "xhigh", "max"]
             return [
@@ -395,7 +416,11 @@ final class MagicAgent: ObservableObject {
             log("MAGIC AI \(kind.rawValue) isn't connected")
             return
         }
-        let cli: URL? = kind == .claude ? AgentConnect.shared.claudeCLI : AgentConnect.shared.codexCLI
+        let cli: URL? = switch kind {
+        case .antigravity: AgentConnect.shared.antigravityCLI
+        case .claude: AgentConnect.shared.claudeCLI
+        case .chatgpt: AgentConnect.shared.codexCLI
+        }
         guard let cli else { return }
         self.model = model
         // What they're pointing at, before Magic locks the window and clears the selection.
@@ -422,7 +447,7 @@ final class MagicAgent: ObservableObject {
             draft = d
             status = "\(kind.name) is thinking"
             // The thinking show, driven by its tool calls (see MCPHandler).
-            MagicThinking.begin(model: model, name: kind.name, color: MCPTools.color(for: kind == .claude ? "Claude" : "ChatGPT"))
+            MagicThinking.begin(model: model, name: kind.name, color: MCPTools.color(for: kind.name))
             launch(kind, cli, url: "\(endpoint)?draft=\(d.token)", brief: Self.brief(request: request, project: model.project, pointers: pointers))
         }
     }
@@ -478,6 +503,8 @@ final class MagicAgent: ObservableObject {
 
     private func signedIn(_ kind: Kind, _ cli: URL) async -> Bool {
         switch kind {
+        case .antigravity:
+            return true
         case .claude:
             let out = await run(cli, ["auth", "status", "--json"])
             guard let data = out.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
@@ -524,6 +551,8 @@ final class MagicAgent: ObservableObject {
         p.executableURL = cli
         p.currentDirectoryURL = folder
         switch kind {
+        case .antigravity:
+            p.arguments = ["--print", "--output-format", "text", "--mode", "auto", "--dangerously-skip-permissions", brief]
         case .claude:
             let config = #"{"mcpServers":{"editroom":{"type":"http","url":"\#(url)"}}}"#
             p.arguments = [
@@ -600,6 +629,8 @@ final class MagicAgent: ObservableObject {
             pending.removeSubrange(pending.startIndex...nl)
             guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
             switch kind {
+            case .antigravity:
+                if let text = String(data: line, encoding: .utf8), !text.isEmpty { lastMessage = text }
             case .claude: readClaude(json)
             case .chatgpt: readCodex(json)
             }

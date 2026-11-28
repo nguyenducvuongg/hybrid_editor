@@ -193,7 +193,10 @@ enum AboutPanel {
         add("FFmpeg", link: "https://ffmpeg.org")
         add(", licensed under the ")
         add("LGPL 2.1", link: "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html")
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Hybrid Editor",
+            .credits: credits,
+        ])
         NSApp.activate()
         // Links in the text's own colour (white in Dark, black in Light), underlined, not the system blue.
         func textViews(_ view: NSView) -> [NSTextView] { view.subviews.flatMap { ($0 as? NSTextView).map { [$0] } ?? textViews($0) } }
@@ -253,7 +256,7 @@ struct EditroomApp: App {
     }
 
     var body: some Scene {
-        Window("Editroom", id: "main") {
+        Window("Hybrid Editor", id: "main") {
             WindowRoot(workspace: workspace)
                 .frame(minWidth: 1080, minHeight: 680)
         }
@@ -261,7 +264,7 @@ struct EditroomApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Editroom") { AboutPanel.show() }
+                Button("About Hybrid Editor") { AboutPanel.show() }
                 Button("Check for Updates…") { Updates.shared.check() }
             }
             CommandGroup(replacing: .newItem) {
@@ -361,7 +364,7 @@ struct EditroomApp: App {
                 Toggle("Skimming", isOn: bind(\.skimming)).keyboardShortcut(keys.menu(.skimming))
                 Toggle("Audio Scrubbing", isOn: bind(\.audioScrub)).keyboardShortcut(keys.menu(.audioScrubbing))
                 Divider()
-                Button("Agent Chat") { PanelLayout.shared.showAgentChat.toggle() }.keyboardShortcut("l", modifiers: .command)
+                Button("Hybrid AI") { PanelLayout.shared.showAgentChat.toggle() }.keyboardShortcut("l", modifiers: .command)
             }
             CommandGroup(before: .windowArrangement) {
                 Button("Show Previous Tab") { workspace.selectPrevious() }.keyboardShortcut(keys.menu(.previousTab))
