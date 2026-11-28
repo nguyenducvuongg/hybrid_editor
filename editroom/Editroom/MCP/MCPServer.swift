@@ -126,11 +126,8 @@ final class MCPServer: ObservableObject {
         }
         // Only local callers by name, and no web pages: a page in a browser can't reach in.
         let host = req.headers["host"] ?? ""
-        let hostName = host.split(separator: ":").first.map(String.init) ?? ""
-        guard ["127.0.0.1", "localhost", "[::1]"].contains(hostName) else { return send("403 Forbidden") }
-        if let origin = req.headers["origin"], !origin.isEmpty {
-            guard let u = URL(string: origin), ["127.0.0.1", "localhost"].contains(u.host ?? "") else { return send("403 Forbidden") }
-        }
+        guard Self.isAllowedLocalHost(host) else { return send("403 Forbidden") }
+        guard Self.isAllowedOrigin(req.headers["origin"]) else { return send("403 Forbidden") }
         guard req.path.hasPrefix("/mcp") else { return send("404 Not Found") }
         // A Magic run's agent works on a hidden draft, named in its address.
         let draftToken = URLComponents(string: req.path)?.queryItems?.first { $0.name == "draft" }?.value
@@ -141,7 +138,17 @@ final class MCPServer: ObservableObject {
         switch req.method {
         case "POST": break
         case "DELETE":
-            if let s = req.headers["mcp-session-id"] { clients[s] = nil }
+            if let s = req.headers["mcp-session-id"] {
+                clients[s] = nil
+                if let model {
+                    if let active = model.activeAgentTurn, active.sessionId == s {
+                        _ = try? model.rollbackAgentTurn(turnId: active.turnId)
+                    }
+                    if model.leaseManager.current?.sessionId == s {
+                        try? model.leaseManager.release(sessionId: s)
+                    }
+                }
+            }
             return send("200 OK")
         default:
             return send("405 Method Not Allowed", headers: ["Allow": "POST, DELETE"])
@@ -178,9 +185,44 @@ final class MCPServer: ObservableObject {
         send("200 OK", body, headers: headers)
     }
 
+    /// Validates that HTTP `Host` points strictly to loopback IPv4/IPv6 with optional numeric port.
+    nonisolated static func isAllowedLocalHost(_ rawHost: String) -> Bool {
+        let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !host.isEmpty else { return false }
+        if host.hasPrefix("[::1]") {
+            let suffix = host.dropFirst(5)
+            if suffix.isEmpty { return true }
+            guard suffix.first == ":" else { return false }
+            let portPart = suffix.dropFirst()
+            return !portPart.isEmpty && portPart.allSatisfy(\.isNumber)
+        }
+        let parts = host.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count <= 2 else { return false }
+        let name = String(parts[0])
+        guard name == "127.0.0.1" || name == "localhost" else { return false }
+        if parts.count == 2 {
+            return !parts[1].isEmpty && parts[1].allSatisfy(\.isNumber)
+        }
+        return true
+    }
+
+    /// Validates browser `Origin` headers to block cross-site DNS/origin requests to localhost MCP.
+    nonisolated static func isAllowedOrigin(_ rawOrigin: String?) -> Bool {
+        guard let raw = rawOrigin?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return true
+        }
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return ["127.0.0.1", "localhost", "::1"].contains(host)
+    }
+
     /// What to call an agent on its cursor.
     static func displayName(_ raw: String) -> String {
         let s = raw.lowercased()
+        if s.contains("antigravity") { return "Antigravity" }
         if s.contains("claude") { return "Claude" }
         if s.contains("codex") { return "Codex" }
         if s.contains("chatgpt") || s.contains("openai") { return "ChatGPT" }

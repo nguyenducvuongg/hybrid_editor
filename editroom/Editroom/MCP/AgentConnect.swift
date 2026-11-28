@@ -438,7 +438,7 @@ final class AgentConnect: ObservableObject {
         ]
         root["mcpServers"] = servers
         let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL)
+        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL, posixPermissions: 0o600)
     }
 
     func disconnectAntigravity() throws {
@@ -448,7 +448,7 @@ final class AgentConnect: ObservableObject {
         servers.removeValue(forKey: "editroom")
         root["mcpServers"] = servers
         let encoded = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL)
+        try HybridStorage.writeAtomicVerified(encoded, to: antigravityConfigURL, posixPermissions: 0o600)
     }
 
     // MARK: Claude Code

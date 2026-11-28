@@ -49,6 +49,10 @@ enum PluginError: Error, LocalizedError, Equatable {
 
 /// Manages a Tier A stdio JSON-RPC 2.0 MCP sidecar subprocess off `@MainActor` (`I6`).
 final class StdioMCPProcess: @unchecked Sendable {
+    static let allowedBaseEnvKeys: Set<String> = [
+        "PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "HYBRID_EDIT_DATA_DIR",
+    ]
+
     let command: String
     let args: [String]
     let workingDir: URL
@@ -89,7 +93,11 @@ final class StdioMCPProcess: @unchecked Sendable {
         p.executableURL = URL(fileURLWithPath: command)
         p.arguments = args
         p.currentDirectoryURL = workingDir
-        var env = ProcessInfo.processInfo.environment
+        let parentEnv = ProcessInfo.processInfo.environment
+        var env: [String: String] = [:]
+        for key in Self.allowedBaseEnvKeys {
+            if let value = parentEnv[key] { env[key] = value }
+        }
         for (k, v) in extraEnv { env[k] = v }
         p.environment = env
 
@@ -486,6 +494,9 @@ final class PluginHost: ObservableObject {
             throw PluginError.invalidManifest("Plugin '\(plugin.id)' does not declare an MCP server.")
         }
         let root = URL(fileURLWithPath: plugin.installDir)
+        guard mcp.command.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw PluginError.invalidManifest("Plugin MCP command contains disallowed control characters.")
+        }
         let cmd: String
         if mcp.command.hasPrefix("/") {
             cmd = mcp.command
@@ -494,8 +505,12 @@ final class PluginHost: ObservableObject {
         }
         var env: [String: String] = [:]
         for key in mcp.envKeys ?? [] {
-            if let val = try? AppSecrets.shared.get(forKey: key) {
-                env[key] = val
+            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !SecretRedactor.sensitiveRawKeySet.contains(trimmed.lowercased()) else {
+                throw PluginError.invalidManifest("Plugin cannot request protected core secret key '\(trimmed)'.")
+            }
+            if let val = try? AppSecrets.shared.get(forKey: trimmed) {
+                env[trimmed] = val
             }
         }
         return StdioMCPProcess(command: cmd, args: mcp.args, workingDir: root, extraEnv: env)

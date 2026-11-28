@@ -138,7 +138,7 @@
 - **M3-E · Native Hybrid UI:** ✅ Hoàn thành (`specs/004-native-hybrid-ui/`): Sidebar **Agent Chat** thu/mở (`⌘L`), tab **Skills**, **Plugins**, **Integrations** trong `SettingsView` + trình duyệt **Stock** nhanh trong `LibraryView`.
 - **M4-E · ComfyUI Colab Tunnel & Stock APIs:** ✅ Hoàn thành (`specs/005-comfyui-stock-providers/`): `TunnelManager` (SSH/Tailscale/Cloudflare), `ComfyUIClient` (REST/WS + I2V + Workflows + Colab notebook), `PexelsProvider` & `PixabayProvider`, 4 MCP tools + live `StockLibraryView`.
 - **M5-E · Smart A-Roll Tiếng Việt & Smart B-Roll 3 Tầng:** ✅ Hoàn thành (`specs/006-smart-aroll-broll/`): `AudioVAD` + `WhisperCPPProvider` (cơ chế chặn ảo giác 10s im lặng `P6`) + `BRollFTSIndex` (SQLite3 FTS5) + `LocalVLMVisionProvider`/`AppleVisionFallbackProvider` + thác 3 tầng: **1. B-Roll local → 2. Pexels/Pixabay → 3. ComfyUI Colab**.
-- **M6-E · Hardening & 5-Round 4K E2E:** Rà soát bảo mật Keychain/Plugin/GitHub, tối ưu Antigravity 2.0 live-attach và benchmark E2E 5 vòng liên tiếp trên 4K/1080p footage.
+- **M6-E · Hardening & 5-Round 4K E2E:** ✅ Hoàn thành (`specs/007-hardening-4k-e2e/`): Hardening Keychain/Plugin Env/Git Hooks/SSH Options/MCP Host & Origin, tối ưu Antigravity 2.0 live-attach (`DELETE /mcp` rollback/release) và benchmark E2E 5 vòng trên 4K `3840x2160` + xuất HEVC (`2.23s`).
 
 ---
 
@@ -237,3 +237,20 @@
 | `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m5_smart_data .../Editroom --smart-editing-test /tmp/hybrid_edit_m5_smart_out` (`BypassSandbox: true`) | Bộ 6 test (`S1–S6` trong `SmartEditingTest.swift`): `P6` 10s im lặng (0 ảo giác), Whisper tiếng Việt + lọc khoảng lặng + `suggested_keep_ranges`, SQLite3 FTS5 có dấu/không dấu (`đ -> d`) & chống lỗi cú pháp query, Loopback Local VLM + `index_broll_folder`/`search_broll` (`fallback_tier=1/2`), `insert_broll_overlay` trên `V2` + 1-step Undo, cài & mở rộng prompt 2 skill M5-E | **6/6 PASSED** (`exit 0`) |
 | `--media-providers-test` (`M1–M6`) + `--extensions-test` (`E1–E7`) + `--hybrid-test` (`T1–T7`) (`BypassSandbox: true`) | Kiểm tra hồi quy toàn bộ bộ kiểm thử từ M1-E đến M5-E | **6/6 + 7/7 + 7/7 PASSED** (`exit 0`, ~10s tổng 4 suite) |
 | `graphify update .` | Cập nhật AST Knowledge Graph cho Milestone 5-E | **39,919 nodes, 94,692 edges, 993 communities** |
+
+---
+
+## 11. Milestone 6-E — Hardening & 5-Round 4K E2E Benchmark (`2026-11-28`)
+
+### Bảo mật & Live-Attach đã triển khai (`specs/007-hardening-4k-e2e/`)
+- **Keychain & Redaction ([KeychainStore.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/KeychainStore.swift)):** Giới hạn Keychain ở `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` và thêm `SecretRedactor` che toàn bộ token nhạy cảm (`geminiAPIKey`, `openAIAPIKey`, `pexelsAPIKey`, `pixabayAPIKey`, `comfyAuthToken`, `comfyCFClientId`, `comfyCFClientSecret` + regex `AIza...` / `sk-...` / `Bearer ...`).
+- **Cách ly Plugin & Git Clone ([PluginHost.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/PluginHost.swift), [SkillRegistry.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Extensions/SkillRegistry.swift)):** Giới hạn env tiến trình con `StdioMCPProcess` chỉ nhận allowlist hệ thống (`PATH`, `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `HYBRID_EDIT_DATA_DIR`), chặn manifest đòi khóa mật cốt lõi của app, từ chối control characters trong command; `GitRunner.safeCloneArguments` ép `-c core.hooksPath=/dev/null`, `-c core.fsmonitor=false` và `GIT_TERMINAL_PROMPT=0`.
+- **Chặn SSH Option Injection & Bảo vệ Loopback MCP ([TunnelManager.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/Providers/ComfyUI/TunnelManager.swift), [MCPServer.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/MCPServer.swift), [AgentConnect.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/MCP/AgentConnect.swift)):** `TunnelManager` chặn `-F` và các `-o ProxyCommand/LocalCommand/PermitLocalCommand/...`; `MCPServer.isAllowedLocalHost` & `isAllowedOrigin` kiểm chặt IPv4/IPv6 `[::1]:port` chống spoof `Host`/`Origin`; `DELETE /mcp` tự rollback `AgentTurn` dở và giải phóng `SessionLease`; ghi `~/.gemini/antigravity/mcp_config.json` quyền `0o600` cùng hiển thị cursor `Antigravity`.
+
+### Kiểm chứng thực nghiệm trên M4 Pro (`2026-11-28`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` sau hardening + [Hardening4KBenchmarkTest.swift](file:///Users/nguyenducvuong/Projects/hybrid_edit_vid/editroom/Editroom/App/Hardening4KBenchmarkTest.swift) | **`** BUILD SUCCEEDED **`** (`exit 0`) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m6_hard_data .../Editroom --hardening-4k-test /tmp/hybrid_edit_m6_hard_out` (`BypassSandbox: true`) | Bộ 6 test (`H1–H6`): `SecretRedactor` & `.room` zero-leak, Plugin env allowlist & chặn `gemini_api_key` + Git hook guard, SSH `-o`/`-F` & IPv6 `[::1]` MCP Host/Origin, `Antigravity 2.0` + `DELETE /mcp` cleanup, **5 vòng E2E 4K (`3840x2160 @ 30fps`)** + xuất **4K HEVC** + `ffprobe`, ngân sách schema `tools=61` (`39,429 bytes`) | **6/6 PASSED** (`rounds=502 ms`, `export_4k_hevc=2.23 s`, `rss=297.2 MB`, `exit 0`) |
+| `--smart-editing-test` (`S1–S6`) + `--media-providers-test` (`M1–M6`) + `--extensions-test` (`E1–E7`) + `--hybrid-test` (`T1–T7`) (`BypassSandbox: true`) | Hồi quy toàn bộ 4 bộ kiểm thử M1-E → M5-E | **6/6 + 6/6 + 7/7 + 7/7 PASSED** (tổng **32/32 PASSED**) |
+| `graphify update .` | Cập nhật AST Knowledge Graph sau cấu trúc sạch + M6-E | **4,538 nodes, 12,392 edges, 230 communities** |

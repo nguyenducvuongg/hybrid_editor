@@ -23,7 +23,7 @@
 
 > **Legacy Archive:** The earlier Rust + Slint prototype based on `jub0t/Concat` is preserved intact on the [`archive/concat-m1`](../../tree/archive/concat-m1) branch (`concat-m1-archive` tag).
 
-### Key Capabilities (`M1-E` → `M5-E` Completed)
+### Key Capabilities (`M1-E` → `M6-E` Completed)
 
 | Milestone | Scope | Highlights |
 | :--- | :--- | :--- |
@@ -32,7 +32,7 @@
 | **M3-E** | Native Hybrid UI | Collapsible Agent Chat sidebar (`⌘L`), `/skill` & `@playhead` composer, Undo-per-turn card, `Settings` tabs (`Skills`, `Plugins`, `Integrations`), `Library > Stock` browser |
 | **M4-E** | ComfyUI Colab & Stock Media | `TunnelManager` (Cloudflare / Tailscale / SSH injection-safe args), `ComfyUIClient` (REST/WS + I2V reference upload + Colab `.ipynb`), `Pexels` + `Pixabay` parallel search, contact sheets & `Sources.txt` |
 | **M5-E** | Smart A-Roll VI & 3-Tier B-Roll | `AudioVAD` + `WhisperCPPProvider` (`P6` zero-hallucination 10s silence guard), persistent **SQLite3 FTS5** index (`đ -> d` normalization), `LocalVLMVisionProvider` + Apple Vision fallback, 3-tier B-roll ladder |
-| **M6-E** | Hardening & 5-Round 4K E2E | *(Next)* Security audit, Antigravity live-attach polish & 5-round 4K benchmark |
+| **M6-E** | Hardening & 5-Round 4K E2E | `ThisDeviceOnly` Keychain + `SecretRedactor`, Plugin env allowlist & core-secret block, Git hook & SSH option guards, strict IPv4/IPv6 `[::1]` MCP Host/Origin, `DELETE /mcp` cleanup, 5-round 4K HEVC E2E (`502 ms` edits, `2.23 s` export) |
 
 ---
 
@@ -54,7 +54,7 @@ hybrid_editor/
 ├── assets/
 │   ├── editor-skills/           # Runtime video-editing SKILL.md workflows (4 built-in skills)
 │   └── colab/                   # `editroom_comfyui_colab.ipynb` (Cloudflare/Tailscale GPU setup)
-├── specs/                       # Spec Kit design specs, contracts & checklists (`001..006`)
+├── specs/                       # Spec Kit design specs, contracts & checklists (`001..007`)
 ├── docs/
 │   ├── ARCHITECTURE.md          # Detailed invariants (`I1–I6`), MCP tools & 3-tier B-roll ladder
 │   └── kit/                     # Antigravity Starter Kit docs
@@ -78,11 +78,12 @@ xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration 
 
 BIN="/tmp/hybrid_edit_editroom_dd/Build/Products/Debug/Editroom.app/Contents/MacOS/Editroom"
 
-# 2. Run all 4 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
+# 2. Run all 5 offline verification suites (isolated via HYBRID_EDIT_DATA_DIR)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_1 "$BIN" --hybrid-test /tmp/hybrid_out_1           # 7/7 checks (T1-T7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_2 "$BIN" --extensions-test /tmp/hybrid_out_2       # 7/7 checks (E1-E7)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_3 "$BIN" --media-providers-test /tmp/hybrid_out_3  # 6/6 checks (M1-M6)
 HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_4 "$BIN" --smart-editing-test /tmp/hybrid_out_4    # 6/6 checks (S1-S6)
+HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_test_5 "$BIN" --hardening-4k-test /tmp/hybrid_out_5     # 6/6 checks (H1-H6)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) for detailed MCP tool schemas, architecture notes, and M4 Pro verification logs.
@@ -96,5 +97,4 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROJECT.md](PROJECT.md) fo
 > **Lưu trữ mã nguồn Concat cũ:** Phiên bản thử nghiệm Rust/Slint trước đây dựa trên `jub0t/Concat` được giữ nguyên tại nhánh [`archive/concat-m1`](../../tree/archive/concat-m1) và tag `concat-m1-archive`.
 
 ### Lộ trình hiện tại
-- ✅ **M1-E → M5-E** đã hoàn thành và kiểm chứng thực nghiệm **26/26 bài test tự động** trên Apple M4 Pro.
-- 🔜 **M6-E**: Hardening bảo mật, hoàn thiện live-attach và benchmark E2E 5 vòng trên footage 4K.
+- ✅ **M1-E → M6-E** đã hoàn thành toàn bộ lộ trình và kiểm chứng thực nghiệm **32/32 bài test tự động** trên Apple M4 Pro (bao gồm benchmark E2E 4K HEVC 5 vòng liên tiếp).

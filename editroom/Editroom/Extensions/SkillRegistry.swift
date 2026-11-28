@@ -174,6 +174,9 @@ struct GitRunner: Sendable {
                     p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
                     p.arguments = args
                     p.currentDirectoryURL = cwd
+                    var env = ProcessInfo.processInfo.environment
+                    env["GIT_TERMINAL_PROMPT"] = "0"
+                    p.environment = env
                     p.standardInput = FileHandle.nullDevice
                     let pipe = Pipe()
                     p.standardOutput = pipe
@@ -192,13 +195,22 @@ struct GitRunner: Sendable {
         cloneURLOverride: nil
     )
 
-    func clonePinned(_ spec: GitHubSpec, to tempDir: URL) async throws -> String {
-        let sourceURL = cloneURLOverride?(spec) ?? spec.cloneURL
-        var args = ["clone", "--depth", "1"]
+    static func safeCloneArguments(spec: GitHubSpec, sourceURL: String, to tempDir: URL) -> [String] {
+        var args = [
+            "-c", "core.hooksPath=/dev/null",
+            "-c", "core.fsmonitor=false",
+            "clone", "--depth", "1",
+        ]
         if let ref = spec.ref {
             args += ["--branch", ref]
         }
         args += ["--", sourceURL, tempDir.path]
+        return args
+    }
+
+    func clonePinned(_ spec: GitHubSpec, to tempDir: URL) async throws -> String {
+        let sourceURL = cloneURLOverride?(spec) ?? spec.cloneURL
+        let args = Self.safeCloneArguments(spec: spec, sourceURL: sourceURL, to: tempDir)
         let cloneRes = try await run(args, nil)
         guard cloneRes.status == 0 else {
             throw SkillError.gitFailed("git clone failed: \(cloneRes.stdout.trimmingCharacters(in: .whitespacesAndNewlines))")

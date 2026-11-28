@@ -68,7 +68,7 @@ final class KeychainStore: SecretStore, @unchecked Sendable {
         } else if existing == errSecItemNotFound {
             var attrs = query
             attrs[kSecValueData as String] = data
-            attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             let status = SecItemAdd(attrs as CFDictionary, nil)
             guard status == errSecSuccess else { throw SecretStoreError.keychainStatus(status) }
         } else {
@@ -163,5 +163,42 @@ enum AppSecrets {
     static var shared: any SecretStore {
         if let overrideStoreForTests { return overrideStoreForTests }
         return HybridStorage.overrideRoot != nil ? FileSecretStore() : KeychainStore()
+    }
+}
+
+/// Scrubs stored Keychain secrets and common API token formats from logs and diagnostics.
+enum SecretRedactor {
+    static let sensitiveSecretKeys: [SecretKey] = [
+        .geminiAPIKey,
+        .openAIAPIKey,
+        .pexelsAPIKey,
+        .pixabayAPIKey,
+        .comfyAuthToken,
+        .comfyCFClientId,
+        .comfyCFClientSecret,
+    ]
+
+    static let sensitiveRawKeySet: Set<String> = Set(sensitiveSecretKeys.map { $0.rawValue.lowercased() })
+
+    private static let tokenPatterns = [
+        #"AIza[0-9A-Za-z_-]{20,}"#,
+        #"sk-[0-9A-Za-z_-]{16,}"#,
+        #"Bearer\s+[A-Za-z0-9._-]{16,}"#,
+    ]
+
+    static func redact(_ text: String, store: any SecretStore = AppSecrets.shared) -> String {
+        var result = text
+        for key in sensitiveSecretKeys {
+            if let value = try? store.get(key), value.count >= 4 {
+                result = result.replacingOccurrences(of: value, with: "[REDACTED]")
+            }
+        }
+        for pattern in tokenPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(result.startIndex..<result.endIndex, in: result)
+                result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "[REDACTED]")
+            }
+        }
+        return result
     }
 }

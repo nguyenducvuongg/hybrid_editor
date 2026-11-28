@@ -218,6 +218,7 @@ struct EditroomApp: App {
         ExtensionsTest.runIfRequested()
         MediaProvidersTest.runIfRequested()
         SmartEditingTest.runIfRequested()
+        Hardening4KBenchmarkTest.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }

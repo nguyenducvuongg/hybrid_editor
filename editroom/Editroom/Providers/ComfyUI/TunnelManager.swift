@@ -83,7 +83,40 @@ final class TunnelManager: @unchecked Sendable {
         default:
             throw TunnelError.invalidCommand("Only 'ssh' or 'cloudflared' executables are allowed for managed tunnels.")
         }
-        return (resolvedExec, Array(tokens.dropFirst()))
+        let argList = Array(tokens.dropFirst())
+        if resolvedExec == "/usr/bin/ssh" {
+            let blockedSSHOptions: Set<String> = [
+                "proxycommand", "localcommand", "permitlocalcommand",
+                "remotecommand", "knownhostscommand", "match",
+                "proxyusefdpass", "pkcs11provider", "securitykeyprovider",
+            ]
+            var idx = 0
+            while idx < argList.count {
+                let tok = argList[idx]
+                if tok == "-F" || tok.hasPrefix("-F") {
+                    throw TunnelError.invalidCommand("Custom SSH config flag '-F' is not permitted.")
+                }
+                if tok == "-o", idx + 1 < argList.count {
+                    let key = argList[idx + 1].split(separator: "=", maxSplits: 1).first?
+                        .trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+                    if blockedSSHOptions.contains(key) {
+                        throw TunnelError.invalidCommand("SSH option '\(key)' is blocked for security.")
+                    }
+                    idx += 2
+                    continue
+                }
+                if tok.hasPrefix("-o"), tok.count > 2 {
+                    let spec = String(tok.dropFirst(2))
+                    let key = spec.split(separator: "=", maxSplits: 1).first?
+                        .trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+                    if blockedSSHOptions.contains(key) {
+                        throw TunnelError.invalidCommand("SSH option '\(key)' is blocked for security.")
+                    }
+                }
+                idx += 1
+            }
+        }
+        return (resolvedExec, argList)
     }
 
     func effectiveBaseURL(for prefs: ComfyConnectionPrefs) throws -> URL {
