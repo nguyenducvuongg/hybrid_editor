@@ -566,12 +566,7 @@ final class MediaStore: ObservableObject {
 // MARK: - Waveform extraction
 
 enum WaveformReader {
-    static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Waveforms", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var folder: URL { HybridStorage.subdir("Waveforms") }
 
     static func cacheURL(for source: URL) -> URL {
         folder.appendingPathComponent(ReverseAudio.cacheName(for: source) + ".wave")
@@ -703,12 +698,7 @@ enum FFmpeg {
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    static var cacheDir: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Converted", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var cacheDir: URL { HybridStorage.subdir("Converted") }
 
     /// Rewraps (or, failing that, transcodes) a file into something AVFoundation decodes.
     static func makePlayable(_ url: URL) async -> URL? {
@@ -716,12 +706,7 @@ enum FFmpeg {
         if CommandLine.arguments.contains("--import-test") {
             FileHandle.standardError.write("IMPORT converting with \(bin)\n".data(using: .utf8)!)
         }
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let stamp = "\(url.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)|\(attrs?[.systemFileNumber] ?? 0)"
-        // A hash that is the same on every launch, so re-converting a file reuses its copy's name.
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
-        let base = url.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
+        let base = HybridStorage.derivedCacheStem(for: url)
         let out = cacheDir.appendingPathComponent(base + ".mov")
 
         // 1. Stream copy into a QuickTime container (instant for H.264/HEVC/AAC inside MKV etc). Some sound copies in

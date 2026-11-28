@@ -14,8 +14,7 @@ enum MediaDownload {
         if let project {
             return project.deletingLastPathComponent().appendingPathComponent("Downloaded Music", isDirectory: true)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Editroom/Downloaded Music", isDirectory: true)
+        return HybridStorage.subdir("Downloaded Music")
     }
 
     /// Downloads `url` into `folder`, checks it's playable audio, and notes its source and licence.

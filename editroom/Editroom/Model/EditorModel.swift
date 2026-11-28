@@ -170,8 +170,14 @@ final class EditorModel: ObservableObject {
     /// Set while something is being dragged out of the library.
     var dragPayload: DragPayload?
 
+    @Published private(set) var revision: UInt64 = 0
+    @Published private(set) var lastCommittedTurn: TurnMeta?
+    private(set) var activeAgentTurn: ActiveAgentTurn?
+
     private var undoStack: [Project] = []
+    private var undoTurns: [TurnMeta?] = []
     private var redoStack: [Project] = []
+    private var redoTurns: [TurnMeta?] = []
     /// For each redo step, the library items there were before it: so redoing a deletion takes the
     /// items away again, without touching anything imported since.
     private var redoKnown: [Set<UUID>] = []
@@ -179,6 +185,24 @@ final class EditorModel: ObservableObject {
     private var liveTimer: Timer?
     private var rebuildPending = false
     private var lastRebuild = 0.0
+    private var customLeaseManager: LeaseManager?
+
+    var leaseProjectKey: String {
+        fileURL?.standardizedFileURL.path ?? "untitled-\(slot.isEmpty ? "default" : slot)"
+    }
+
+    var leaseManager: LeaseManager {
+        if let customLeaseManager { return customLeaseManager }
+        let mgr = LeaseManager(projectKey: leaseProjectKey)
+        customLeaseManager = mgr
+        return mgr
+    }
+
+    func resetLeaseManager(leaseDir: URL = HybridStorage.leasesDir, gracePeriodMs: UInt64 = LeaseManager.defaultGraceMs) {
+        customLeaseManager = LeaseManager(leaseDir: leaseDir, projectKey: leaseProjectKey, gracePeriodMs: gracePeriodMs)
+    }
+
+    var topUndoTurn: TurnMeta? { undoTurns.last ?? nil }
 
     /// Which tab this is, for what it keeps between launches (its recovery copy, what it reopens).
     /// The first tab's is empty, so a project from before tabs reopens in it.
@@ -656,12 +680,12 @@ final class EditorModel: ObservableObject {
 
     /// Unsaved work on an untitled project is kept here, and reopened on the next launch (one for each tab).
     var recoveryURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Recovery", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Test launches (`--open`, `--selftest`) keep theirs apart, so they never touch a real tab's.
+        let dir = HybridStorage.subdir("Recovery")
+        // Test launches (`--open`, `--selftest`, `--hybrid-test`) keep theirs apart, so they never touch a real tab's.
         let args = CommandLine.arguments
-        if args.contains("--open") || args.contains("--selftest") { return dir.appendingPathComponent("Untitled (test).room") }
+        if args.contains("--open") || args.contains("--selftest") || args.contains("--hybrid-test") {
+            return dir.appendingPathComponent("Untitled (test).room")
+        }
         return dir.appendingPathComponent(slot.isEmpty ? "Untitled.room" : "Untitled \(slot).room")
     }
 
@@ -852,9 +876,15 @@ final class EditorModel: ObservableObject {
         p.sanitize()
         guard p != project else { return }
         undoStack.append(project)
-        if undoStack.count > 200 { undoStack.removeFirst() }
+        undoTurns.append(nil)
+        if undoStack.count > 200 {
+            undoStack.removeFirst()
+            if !undoTurns.isEmpty { undoTurns.removeFirst() }
+        }
         redoStack.removeAll()
+        redoTurns.removeAll()
         redoKnown.removeAll()
+        revision &+= 1
         project = p
         didChange()
     }
@@ -869,7 +899,9 @@ final class EditorModel: ObservableObject {
         p.sanitize()
         guard p != project else { return }
         redoStack.removeAll()
+        redoTurns.removeAll()
         redoKnown.removeAll()
+        revision &+= 1
         project = p
         didChange()
     }
@@ -909,15 +941,24 @@ final class EditorModel: ObservableObject {
         liveSnapshot = nil
         if snapshot != project {
             undoStack.append(snapshot)
+            undoTurns.append(nil)
+            if undoStack.count > 200 {
+                undoStack.removeFirst()
+                if !undoTurns.isEmpty { undoTurns.removeFirst() }
+            }
             redoStack.removeAll()
-        redoKnown.removeAll()
+            redoTurns.removeAll()
+            redoKnown.removeAll()
+            revision &+= 1
         }
     }
 
     func undo() {
         commitLive()
         guard var prev = undoStack.popLast() else { return }
+        let turn = undoTurns.isEmpty ? nil : undoTurns.removeLast()
         redoStack.append(project)
+        redoTurns.append(turn)
         redoKnown.append(Set(prev.assets.map(\.id)))
         // The library isn't undone (imports and relinks stay), except that items a step deleted come back.
         prev.assets = Self.restoring(prev.assets, into: project.assets)
@@ -927,6 +968,7 @@ final class EditorModel: ObservableObject {
         Self.keepFolders(&prev, from: project, importing: importingFolders)
         // Magic's prompt history isn't undone either.
         prev.magicHistory = project.magicHistory
+        revision &+= 1
         project = prev
         didChange()
     }
@@ -951,15 +993,107 @@ final class EditorModel: ObservableObject {
     func redo() {
         commitLive()
         guard var next = redoStack.popLast() else { return }
+        let turn = redoTurns.isEmpty ? nil : redoTurns.removeLast()
         let known = redoKnown.popLast() ?? []
         undoStack.append(project)
+        undoTurns.append(turn)
+        if undoStack.count > 200 {
+            undoStack.removeFirst()
+            if !undoTurns.isEmpty { undoTurns.removeFirst() }
+        }
         // Items the step deleted go again; everything else in the library stays as it is now.
         let deleted = known.subtracting(next.assets.map(\.id))
         next.assets = project.assets.filter { !deleted.contains($0.id) }
         Self.keepFolders(&next, from: project, importing: importingFolders)
         next.magicHistory = project.magicHistory
+        revision &+= 1
         project = next
         didChange()
+    }
+
+    // MARK: Transactional AgentTurn (I1)
+
+    func beginAgentTurn(turnId: String, summary: String, sessionId: String? = nil) throws {
+        let tid = turnId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tid.isEmpty, tid.utf8.count <= 64 else {
+            throw AgentTurnError.invalid("turn_id must be 1..64 UTF-8 bytes.")
+        }
+        let cleanSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanSummary.isEmpty else {
+            throw AgentTurnError.invalid("summary must not be empty.")
+        }
+        if let active = activeAgentTurn {
+            throw AgentTurnError.alreadyActive(activeTurnId: active.turnId)
+        }
+        commitLive()
+        activeAgentTurn = ActiveAgentTurn(
+            turnId: tid,
+            summary: String(cleanSummary.prefix(160)),
+            sessionId: sessionId,
+            baselineProject: project,
+            model: self
+        )
+    }
+
+    @discardableResult
+    func commitAgentTurn(turnId: String) throws -> TurnCommit {
+        guard let active = activeAgentTurn else { throw AgentTurnError.notActive }
+        guard active.turnId == turnId else {
+            throw AgentTurnError.turnMismatch(expected: active.turnId, actual: turnId)
+        }
+        commitLive()
+        var finalProject = active.draft.project
+        finalProject.sanitize()
+        let affected = diffAffectedClipIds(before: active.baselineProject, after: finalProject)
+        let changed = finalProject != active.baselineProject
+        active.draft.close()
+        activeAgentTurn = nil
+        if changed {
+            undoStack.append(active.baselineProject)
+            revision &+= 1
+            let meta = TurnMeta(turnId: active.turnId, summary: active.summary, affectedClipIds: affected, revision: revision)
+            undoTurns.append(meta)
+            if undoStack.count > 200 {
+                undoStack.removeFirst()
+                if !undoTurns.isEmpty { undoTurns.removeFirst() }
+            }
+            redoStack.removeAll()
+            redoTurns.removeAll()
+            redoKnown.removeAll()
+            project = finalProject
+            lastCommittedTurn = meta
+            didChange()
+        }
+        return TurnCommit(
+            turnId: active.turnId,
+            summary: active.summary,
+            revision: revision,
+            affectedClipIds: affected,
+            pushedUndoStep: changed
+        )
+    }
+
+    @discardableResult
+    func rollbackAgentTurn(turnId: String) throws -> UInt64 {
+        guard let active = activeAgentTurn else { throw AgentTurnError.notActive }
+        guard active.turnId == turnId else {
+            throw AgentTurnError.turnMismatch(expected: active.turnId, actual: turnId)
+        }
+        active.draft.close()
+        activeAgentTurn = nil
+        if project != active.baselineProject {
+            project = active.baselineProject
+            didChange()
+        }
+        return revision
+    }
+
+    @discardableResult
+    func rollbackAnyActiveAgentTurn() -> String? {
+        guard let active = activeAgentTurn else { return nil }
+        let tid = active.turnId
+        _ = try? rollbackAgentTurn(turnId: tid)
+        return tid
     }
 
     private func didChange() {
@@ -2744,9 +2878,15 @@ final class EditorModel: ObservableObject {
         needsRestore = false
         if isPlaying { pause() }
         commitLive()
+        activeAgentTurn = nil
         undoStack.removeAll()
         redoStack.removeAll()
         redoKnown.removeAll()
+        undoTurns.removeAll()
+        redoTurns.removeAll()
+        lastCommittedTurn = nil
+        customLeaseManager = nil
+        revision = 0
         selection = []
         mediaSelection = []
         folderSelection = []
@@ -2818,6 +2958,8 @@ final class EditorModel: ObservableObject {
         undoStack.removeAll()
         redoStack.removeAll()
         redoKnown.removeAll()
+        undoTurns.removeAll()
+        redoTurns.removeAll()
         didChange()
         return true
     }

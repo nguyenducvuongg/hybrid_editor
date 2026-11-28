@@ -11,8 +11,7 @@ extension EditorModel {
     /// Where copies wait while the project isn't saved.
     static var heldMediaFolder: URL {
         if let t = heldMediaFolderForTests { return t }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Editroom/From Photos", isDirectory: true)
+        return HybridStorage.subdir("From Photos")
     }
 
     /// Where promised files go now: beside the project once it's saved.

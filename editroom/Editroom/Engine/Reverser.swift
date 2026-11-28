@@ -8,12 +8,7 @@ import VideoToolbox
 /// `length - s`. Trims, splits and speed work as on any clip. Picture is decoded backwards while it
 /// plays (`ReverseFrames`); sound is reversed once per file into a small cached WAV (`ReverseAudio`).
 enum Reverser {
-    static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Reversed", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var folder: URL { HybridStorage.subdir("Reversed") }
 }
 
 // MARK: - Picture
@@ -225,13 +220,7 @@ enum ReverseAudio {
 
     /// A file's name plus a hash of its path, size and date: changes whenever the file does.
     static func cacheName(for source: URL) -> String {
-        let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
-        // The file's number on its disk too: one replaced by another of the same name, size and date (a rotated copy)
-        // is a new file, so its frames and sound are made again rather than the old ones shown.
-        let stamp = "\(source.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)|\(attrs?[.systemFileNumber] ?? 0)"
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
-        return source.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
+        HybridStorage.derivedCacheStem(for: source)
     }
 
     /// Writes the whole sound of a file backwards as 16-bit stereo WAV. The decoded sound goes to

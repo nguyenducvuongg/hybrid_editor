@@ -79,12 +79,7 @@ final class ScrubStrips {
 
     // MARK: Making a strip
 
-    nonisolated static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Scrub", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    nonisolated static var folder: URL { HybridStorage.subdir("Scrub") }
 
     nonisolated private static func build(_ rt: MediaRuntime, duration: Double) async -> [Data]? {
         let file = folder.appendingPathComponent(ReverseAudio.cacheName(for: rt.asset.url) + ".strip")

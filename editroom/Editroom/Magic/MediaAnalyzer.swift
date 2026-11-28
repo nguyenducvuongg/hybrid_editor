@@ -44,20 +44,11 @@ struct MusicAnalysis: Codable {
 enum MediaAnalyzer {
     static let version = 2
 
-    static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Analysis", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var folder: URL { HybridStorage.subdir("Analysis") }
 
     /// A cache file named for the source file's path, size and date, so an edited file is looked at again.
     static func cacheURL(_ source: URL, kind: String) -> URL {
-        let attrs = try? FileManager.default.attributesOfItem(atPath: source.path)
-        let stamp = "\(source.path)|\(attrs?[.size] ?? 0)|\(attrs?[.modificationDate] ?? Date.distantPast)"
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in stamp.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
-        let name = source.deletingPathExtension().lastPathComponent + "-" + String(hash, radix: 36)
+        let name = HybridStorage.derivedCacheStem(for: source)
         return folder.appendingPathComponent("\(name)-\(kind)-v\(version).json")
     }
 

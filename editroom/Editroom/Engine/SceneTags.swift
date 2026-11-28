@@ -263,12 +263,7 @@ final class SceneTagStore: ObservableObject {
 
     // MARK: On disk
 
-    nonisolated static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Scenes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    nonisolated static var folder: URL { HybridStorage.subdir("Scenes") }
 
     /// Named with the version of how tags are chosen, so a change makes them again (3: with Apple
     /// Intelligence's keywords).

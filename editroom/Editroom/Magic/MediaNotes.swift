@@ -13,12 +13,7 @@ enum MediaNotes {
 
     static let maxLength = 800
 
-    static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Notes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var folder: URL { HybridStorage.subdir("Notes") }
 
     /// The file's name, size and date make the name, so editing the footage leaves the note behind.
     private static func file(for path: String) -> URL {

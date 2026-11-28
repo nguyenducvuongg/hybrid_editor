@@ -74,12 +74,7 @@ final class ScrubCache {
 
     // MARK: Making them
 
-    nonisolated private static var folder: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Editroom/Scrub", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    nonisolated private static var folder: URL { HybridStorage.subdir("Scrub") }
 
     /// Unmanaged, like the compositor's: the file's Rec.709 values go in and come out untouched (a
     /// managed context turned them into sRGB, which looked brighter and more saturated than playback).

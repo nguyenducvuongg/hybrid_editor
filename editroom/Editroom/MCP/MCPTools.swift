@@ -29,7 +29,7 @@ enum MCPTools {
 
     // MARK: Definitions
 
-    private static func tool(_ name: String, _ title: String, _ description: String, _ props: [String: Any] = [:],
+    static func tool(_ name: String, _ title: String, _ description: String, _ props: [String: Any] = [:],
                              required: [String] = [], readOnly: Bool = false) -> [String: Any] {
         [
             "name": name,
@@ -39,8 +39,8 @@ enum MCPTools {
             "annotations": ["readOnlyHint": readOnly, "destructiveHint": false, "openWorldHint": false],
         ]
     }
-    private static func num(_ d: String) -> [String: Any] { ["type": "number", "description": d] }
-    private static func str(_ d: String) -> [String: Any] { ["type": "string", "description": d] }
+    static func num(_ d: String) -> [String: Any] { ["type": "number", "description": d] }
+    static func str(_ d: String) -> [String: Any] { ["type": "string", "description": d] }
 
     static var definitions: [[String: Any]] {
         [
@@ -112,14 +112,28 @@ enum MCPTools {
             tool("history", "Undo or redo", "Undoes or redoes the last change (each tool call is one change).", ["action": ["type": "string", "enum": ["undo", "redo"]]], required: ["action"]),
             tool("auto_edit", "Auto edit", "Builds a whole cut from the library on its own: best moments, cut to the beat of a song if there is one, titled. Replaces what's on the timeline (one undo brings it back)."),
             tool("save_project", "Save project", "Saves the project to its file. A project that's never been saved has to be saved by the person."),
-        ] + moreDefinitions
+        ] + moreDefinitions + hybridDefinitions
     }
 
     // MARK: Calls
 
     static func call(_ name: String, _ args: [String: Any], model: EditorModel, client: MCPServer.Client?,
-                     draft: MCPDraft? = nil) async throws -> [[String: Any]] {
+                     draft: MCPDraft? = nil, sessionId: String? = nil, isExternal: Bool = false) async throws -> [[String: Any]] {
         let who = client?.name ?? "Agent"
+        if !hybridLifecycleTools.contains(name),
+           let rec = model.leaseManager.reclaimIfExpired(), rec.uncommittedTurnId != nil {
+            _ = model.rollbackAnyActiveAgentTurn()
+        }
+        let callerSession = (args["session_id"] as? String) ?? sessionId
+        if isExternal && !hybridLifecycleTools.contains(name) && externalMutatingTools.contains(name) {
+            try authorizeExternalWrite(model: model, sessionId: callerSession)
+        }
+        var activeDraft = draft
+        if activeDraft == nil, isExternal, !hybridLifecycleTools.contains(name), let active = model.activeAgentTurn,
+           active.sessionId == nil || callerSession == nil || active.sessionId == callerSession {
+            activeDraft = active.draft
+        }
+        let draft = activeDraft
         draft?.called(name)
         /// The project as it is now: the Magic draft's while there is one.
         func now() -> Project { draft?.project ?? model.project }
@@ -135,7 +149,12 @@ enum MCPTools {
 
         switch name {
         case "get_project":
-            return json(projectJSON(p, title: model.title, playhead: draft?.playhead ?? model.playhead))
+            var d = projectJSON(p, title: model.title, playhead: draft?.playhead ?? model.playhead)
+            d["revision"] = Int(model.revision)
+            if let activeTurnId = model.activeAgentTurn?.turnId {
+                d["active_turn_id"] = activeTurnId
+            }
+            return json(d)
 
         case "list_media":
             // Labels most of the library shares ("structure", "people" in a vlog) don't tell clips apart: left out.
@@ -596,6 +615,7 @@ enum MCPTools {
             return text("Saved.")
 
         default:
+            if let out = try await callHybrid(name, args, model: model, client: client, draft: draft, sessionId: sessionId) { return out }
             if let out = try await callMore(name, args, model: model, who: who, draft: draft) { return out }
             throw MCPToolError("No tool called \(name).")
         }
@@ -605,7 +625,7 @@ enum MCPTools {
 
     /// Plays edits with the agent's cursor and waits until they're done; during a Magic edit, just
     /// makes them in the draft.
-    private static func perform(_ edits: [MagicEdit], _ model: EditorModel, _ who: String, _ draft: MCPDraft?) async throws {
+    static func perform(_ edits: [MagicEdit], _ model: EditorModel, _ who: String, _ draft: MCPDraft?) async throws {
         if let draft { return draft.apply(edits) }
         reveal(edits, model)
         let color = Self.color(for: who)
@@ -656,13 +676,13 @@ enum MCPTools {
 
     // MARK: Arguments
 
-    private static func numArg(_ args: [String: Any], _ key: String) throws -> Double {
+    static func numArg(_ args: [String: Any], _ key: String) throws -> Double {
         if let d = args[key] as? Double { return d }
         if let i = args[key] as? Int { return Double(i) }
         throw MCPToolError("\(key) is needed, in seconds.")
     }
 
-    private static func assetArg(_ args: [String: Any], _ p: Project) throws -> MediaAsset {
+    static func assetArg(_ args: [String: Any], _ p: Project) throws -> MediaAsset {
         guard let s = args["asset_id"] as? String else { throw MCPToolError("asset_id is needed (see list_media).") }
         guard let a = p.assets.first(where: { $0.id.uuidString == s.uppercased() || $0.name == s }) else {
             throw MCPToolError("No library item with id \(s). list_media has them.")
@@ -670,14 +690,14 @@ enum MCPTools {
         return a
     }
 
-    private static func clipArg(_ args: [String: Any], _ p: Project) throws -> Clip {
+    static func clipArg(_ args: [String: Any], _ p: Project) throws -> Clip {
         guard let s = args["clip_id"] as? String else { throw MCPToolError("clip_id is needed (see get_project).") }
         guard let id = UUID(uuidString: s), let c = p.clip(id) else { throw MCPToolError("No clip with id \(s). get_project has them.") }
         guard !p.isLocked(c.trackID) else { throw MCPToolError("That clip is on a locked track.") }
         return c
     }
 
-    private static func trackArg(_ name: String, _ p: Project, kind: TrackKind) throws -> UUID {
+    static func trackArg(_ name: String, _ p: Project, kind: TrackKind) throws -> UUID {
         let n = name.uppercased().trimmingCharacters(in: .whitespaces)
         let prefix = kind == .video ? "V" : "A"
         guard n.hasPrefix(prefix), let i = Int(n.dropFirst()), i >= 1 else {
@@ -692,7 +712,7 @@ enum MCPTools {
     // MARK: JSON
 
     /// Three decimal places, written as such ("5.417", not "5.4169999999999998").
-    private static func round3(_ v: Double) -> NSDecimalNumber { NSDecimalNumber(string: String(format: "%.3f", v)) }
+    static func round3(_ v: Double) -> NSDecimalNumber { NSDecimalNumber(string: String(format: "%.3f", v)) }
 
     static func trackName(_ id: UUID, _ p: Project) -> String {
         if let i = p.trackIndex(id, kind: .video) { return "V\(i + 1)" }
@@ -751,7 +771,7 @@ enum MCPTools {
         return d
     }
 
-    private static func clipsJSON(_ ids: [UUID], _ p: Project) -> [[String: Any]] {
+    static func clipsJSON(_ ids: [UUID], _ p: Project) -> [[String: Any]] {
         ids.compactMap { p.clip($0) }.map { clipJSON($0, p) }
     }
 
@@ -919,7 +939,7 @@ extension MCPTools {
         return RGBA(r: Double(n >> 16 & 255) / 255, g: Double(n >> 8 & 255) / 255, b: Double(n & 255) / 255, a: 1)
     }
 
-    private static func double(_ v: Any?) -> Double? { (v as? Double) ?? (v as? Int).map(Double.init) }
+    static func double(_ v: Any?) -> Double? { (v as? Double) ?? (v as? Int).map(Double.init) }
 
     /// The tools above; nil for a name that isn't one of them.
     static func callMore(_ name: String, _ args: [String: Any], model: EditorModel, who: String, draft: MCPDraft?) async throws -> [[String: Any]]? {

@@ -41,7 +41,7 @@ final class MCPServer: ObservableObject {
         if enabled { start() }
     }
 
-    func start() { listen(on: Self.port) }
+    func start(on port: UInt16 = MCPServer.port) { listen(on: port) }
 
     private func listen(on number: UInt16) {
         guard listener == nil, let port = number == 0 ? NWEndpoint.Port.any : NWEndpoint.Port(rawValue: number) else { return }
@@ -276,6 +276,7 @@ enum MCPHandler {
                 FileHandle.standardError.write("MCP CALL \(name) \(token == nil ? "live" : "draft") from \(client?.name ?? "?")\n".data(using: .utf8)!)
             }
             var draft: MCPDraft?
+            var callerSessionId: String?
             if let token {
                 draft = MCPDraft.find(token)
                 guard draft != nil else { return ok(MCPTools.failure("This Magic edit was stopped or has finished. Stop now.")) }
@@ -283,8 +284,20 @@ enum MCPHandler {
             guard let model = draft?.model ?? MCPServer.shared.model else {
                 return ok(MCPTools.failure("Editroom isn't ready yet."))
             }
+            if token == nil {
+                if !MCPTools.hybridLifecycleTools.contains(name),
+                   let rec = model.leaseManager.reclaimIfExpired(), rec.uncommittedTurnId != nil {
+                    _ = model.rollbackAnyActiveAgentTurn()
+                }
+                callerSessionId = (args["session_id"] as? String) ?? client?.id
+                if let active = model.activeAgentTurn, !MCPTools.hybridLifecycleTools.contains(name) {
+                    if active.sessionId == nil || callerSessionId == nil || active.sessionId == callerSessionId {
+                        draft = active.draft
+                    }
+                }
+            }
             // A Magic run's tool calls drive its thinking show.
-            if let draft, let show = MagicThinking.current {
+            if token != nil, let draft, let show = MagicThinking.current {
                 switch name {
                 case "look_at_media", "analyze_media":
                     if let id = (args["asset_id"] as? String).flatMap(UUID.init(uuidString:)) { show.focus(asset: id) }
@@ -293,18 +306,19 @@ enum MCPHandler {
                 default: _ = draft
                 }
             }
-            let activity = draft != nil && MagicThinking.current != nil
+            let activity = token != nil && draft != nil && MagicThinking.current != nil
                 ? MagicState.shared.begin(activity: describe(name, args, in: model.project)) : nil
             defer {
                 if let activity { MagicState.shared.finish(activity: activity) }
                 let edits: Set<String> = ["add_clip", "add_title", "move_clip", "trim_clip", "split_clip", "delete_clips", "set_speed", "set_speed_ramp", "set_captions",
                                           "set_grade", "set_audio", "set_transition", "set_sequence", "add_track", "history", "download_media",
                                           "set_marker", "delete_markers", "set_in_out", "set_transform", "set_title_style", "freeze_frame",
-                                          "reverse_clip", "detach_audio", "duplicate_clip", "set_track", "add_solid", "set_solid_color"]
-                if let draft, edits.contains(name) { MagicThinking.current?.plan(draft.project) }
+                                          "reverse_clip", "detach_audio", "duplicate_clip", "set_track", "add_solid", "set_solid_color", "apply_edl_patch"]
+                if token != nil, let draft, edits.contains(name) { MagicThinking.current?.plan(draft.project) }
             }
             do {
-                let content = try await MCPTools.call(name, args, model: model, client: client, draft: draft)
+                let content = try await MCPTools.call(name, args, model: model, client: client, draft: draft,
+                                                      sessionId: callerSessionId, isExternal: token == nil)
                 return ok(["content": content, "isError": false])
             } catch {
                 return ok(MCPTools.failure((error as? MCPToolError)?.message ?? error.localizedDescription))

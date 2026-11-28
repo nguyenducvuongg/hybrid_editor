@@ -133,7 +133,31 @@
   - `edit_hevc_4k_web.mp4`: `hevc`, `3840x2160`, `30/1 fps`, `aac`, `duration=4.500000`, `1,360,703 bytes`.
 
 ### Lộ trình tiếp theo trên lõi `Editroom` (`feat/editroom-core`)
-- **M1-E · Guardrails & Live-Attach Hybrid Control (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** Tách `HYBRID_EDIT_DATA_DIR`, vá `ReverseAudio.cacheName` theo UTF-8 byte length `<= 180` (`P7`), mở rộng `MCPTools` + `MCPServer` với `begin_agent_turn` / `commit_agent_turn` / `rollback_agent_turn`, `SessionLease` + `revision` check, `apply_edl_patch`, và `preview_timeline_strip`.
+- **M1-E · Guardrails & Live-Attach Hybrid Control (`I1`, `I2`, `I5`, `P1`, `P7`, `P8`):** ✅ Hoàn thành (`specs/002-editroom-guardrails-mcp/`).
 - **M2-E · Smart A-Roll Tiếng Việt (`I4`, `I6`, `P6`):** Cắm `whisper.cpp` (Metal, `large-v3-turbo`) + Silero VAD vào `Transcripts.swift`, bổ sung test hồi quy 10s im lặng (`P6`) và runtime skill `assets/editor-skills/aroll-rough-cut/SKILL.md`.
 - **M3-E · Smart B-Roll Context Engine:** Tích hợp Ollama/LM Studio (local VLM) + SQLite FTS5 vào `SceneTags.swift` & `MCPTools` (`index_broll_folder`, `search_broll`, `insert_broll_overlay`) cùng `assets/editor-skills/smart-broll-inserter/SKILL.md`.
 - **M4-E · Antigravity 2.0 Integration & 5-Round E2E:** Hỗ trợ kết nối 1-click Antigravity trong `AgentConnect.swift` và kiểm thử E2E 5 vòng liên tiếp trên 4K/1080p footage.
+
+---
+
+## 6. Milestone 1-E — Editroom Guardrails, `AgentTurn`, `SessionLease` & Hybrid MCP (`2026-11-28`)
+
+### Kiến trúc đã triển khai (`specs/002-editroom-guardrails-mcp/`)
+- **Cô lập dữ liệu & Tên file an toàn APFS UTF-8 (`I4`, `I5`, `P7`):**
+  - `editroom/Editroom/Model/AppStorage.swift` (`enum HybridStorage` tránh trùng `@AppStorage` của SwiftUI): hỗ trợ biến môi trường `HYBRID_EDIT_DATA_DIR`, mặc định `~/Library/Application Support/hybrid_edit_vid`.
+  - Gắn toàn bộ 12 điểm lưu trữ/cache (`Reverser`, `Transcripts`, `SceneTagStore`, `ScrubCache`, `ScrubStrips`, `WaveformReader`, `FFmpeg`, `MediaAnalyzer`, `MediaNotes`, `MagicAgent`, `MediaDownload`, `EditorModel.recoveryURL` & `heldMediaFolder`).
+  - `derivedCacheStem(for:maxPrefixBytes: 120)` băm `path|size|mtime|inode` bằng SHA-256 (16 hex) + cắt trên biên ký tự UTF-8 hợp lệ để tổng tên file hậu tố luôn `<= 200` UTF-8 bytes; ghi nguyên tử qua `writeAtomicVerified(_:to:posixPermissions:)`.
+- **Single-Writer `SessionLease` & Hồi phục `SIGKILL` (`I2`, `P8`):**
+  - `editroom/Editroom/MCP/SessionLease.swift` (`LeaseManager`, `SessionLease`, `RecoveredLease`): lưu lease dạng `0o600` trong `<HYBRID_EDIT_DATA_DIR>/leases/<sha256_16>.lease.json`, kiểm tra PID bằng `Darwin.kill(pid, 0)`, grace window `5_000...10_000` ms.
+  - Khi lease hết hạn hoặc PID chết đang giữ `activeTurnId != nil`, engine tự rollback `AgentTurn` dở dang trước khi nhường quyền ghi cho client kế tiếp (bỏ qua pre-reclaim cho lifecycle tools để `session_attach` báo đúng `recovered_rolled_back_turn_id`).
+- **Transactional `AgentTurn` & `revision` đơn điệu (`I1`, `P1`, `P4`):**
+  - `editroom/Editroom/Model/AgentTurn.swift` & `EditorModel.swift`: thêm `@Published private(set) var revision: UInt64`, `activeAgentTurn`, `undoTurns`/`redoTurns`, `beginAgentTurn`, `commitAgentTurn`, `rollbackAgentTurn`. Các thao tác `ViewState` (`seek`, `selection`, `setView`, `skimming`) giữ nguyên `revision`, `undoStack` và `isDirty`.
+- **Hybrid MCP Tools (`editroom/Editroom/MCP/MCPTools+Hybrid.swift`, `MCPServer.swift`, `MCPTools.swift`):**
+  - Bổ sung 8 tools: `session_attach`, `session_heartbeat`, `session_release`, `begin_agent_turn`, `commit_agent_turn`, `rollback_agent_turn`, `apply_edl_patch` (`keep_ranges`, `delete_range`, `insert_overlay`), `preview_timeline_strip` (render bằng `CompositionBuilder` + `TimelineCompositor` & xuất JPEG grid kèm nhãn thời gian, `I3`/`P2`), cùng `"revision"` / `"active_turn_id"` trong `get_project`.
+
+### Kiểm chứng thực nghiệm trên M4 Pro (`2026-11-28`)
+| Kiểm tra | Phạm vi | Kết quả |
+| :--- | :--- | :--- |
+| `xcodebuild -project editroom/Editroom.xcodeproj -scheme Editroom -configuration Debug -derivedDataPath /tmp/hybrid_edit_editroom_dd build` (`BypassSandbox: true`) | Build toàn bộ target `Editroom` (`Sparkle` + `HybridStorage` + MCP + Guardrails test runner) | **`** BUILD SUCCEEDED **`** (`exit 0`, ~16s incremental) |
+| `HYBRID_EDIT_DATA_DIR=/tmp/hybrid_edit_m1e_data .../Editroom --hybrid-test /tmp/hybrid_edit_m1e_out` (`BypassSandbox: true`) | Bộ 7 test tự động (`T1–T7` trong `HybridGuardrailsTest.swift`): cô lập thư mục + tên tiếng Việt dài (`141B`), `ViewState` 20 lần (`revision=0`), `AgentTurn` 3 edit = 1 Undo/Redo + Rollback, `SIGKILL` lease `0o600`, `apply_edl_patch keep_ranges` + Undo, `preview_timeline_strip` vs `Exporter` nền đen RGB < 12 (`P2`), live HTTP `403` spoofed `Host` (`P3`) + 5 vòng E2E `revision` (`port=47920`) | **7/7 PASSED** (`ALL 7 GUARDRAIL CHECKS PASSED`, `exit 0`, ~11s) |
+| `graphify update .` | Cập nhật AST Knowledge Graph cho lõi `Editroom` | **39,251 nodes, 92,688 edges, 975 communities** |

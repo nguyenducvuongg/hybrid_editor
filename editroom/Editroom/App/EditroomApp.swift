@@ -207,7 +207,10 @@ struct EditroomApp: App {
     init() {
         // `--mcp`: a go-between for an AI agent, with no window. Never returns.
         MCPBridge.runIfRequested()
-        Self.carryOverFromCutAndPlay()
+        if HybridStorage.overrideRoot == nil {
+            Self.carryOverFromCutAndPlay()
+        }
+        HybridGuardrailsTest.runIfRequested()
         SelfTest.runIfRequested()
         FormatCheck.runIfRequested()
     }

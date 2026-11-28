@@ -517,7 +517,7 @@ final class MagicAgent: ObservableObject {
     private func launch(_ kind: Kind, _ cli: URL, url: String, brief: String) {
         let fm = FileManager.default
         // An empty folder of its own, so the AI reads no project's settings or notes.
-        let folder = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Editroom/Magic", isDirectory: true)
+        let folder = HybridStorage.subdir("Magic")
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let p = Process()
